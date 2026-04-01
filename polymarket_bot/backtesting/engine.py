@@ -38,10 +38,15 @@ from polymarket_bot.risk.manager import RiskManager
 from polymarket_bot.risk.portfolio import Portfolio
 from polymarket_bot.risk.position_sizer import PositionSizer
 from polymarket_bot.strategies.arbitrage import ArbitrageStrategy
+from polymarket_bot.strategies.contrarian import ContrarianStrategy
 from polymarket_bot.strategies.market_maker import MarketMakerStrategy
+from polymarket_bot.strategies.market_regime import RegimeDetector
+from polymarket_bot.strategies.momentum import MomentumStrategy
 from polymarket_bot.strategies.sentiment import SentimentStrategy
 from polymarket_bot.strategies.signals import SignalAggregator
 from polymarket_bot.strategies.statistical import StatisticalStrategy
+from polymarket_bot.strategies.time_decay import TimeDecayStrategy
+from polymarket_bot.risk.dynamic_kelly import DynamicKellySizer
 from polymarket_bot.utils.helpers import calculate_sharpe_ratio
 
 logger = structlog.get_logger()
@@ -125,17 +130,21 @@ class BacktestEngine:
         Returns:
             BacktestResult with performance metrics.
         """
-        enabled = strategies or ["sentiment", "statistical", "market_maker", "arbitrage"]
+        enabled = strategies or [
+            "sentiment", "statistical", "market_maker", "arbitrage",
+            "momentum", "contrarian", "time_decay",
+        ]
 
         # ── Setup ────────────────────────────────────────────────
         sim_markets = self.simulator.create_simulated_markets(num_markets)
 
         client = PaperTradingClient(PolymarketConfig())
         portfolio = Portfolio(initial_cash=self.initial_capital)
-        sizer = PositionSizer(self.config.trading, self.config.risk)
-        risk_mgr = RiskManager(self.config.risk, self.config.trading, portfolio, sizer)
+        dynamic_sizer = DynamicKellySizer(self.config.trading, self.config.risk)
+        risk_mgr = RiskManager(self.config.risk, self.config.trading, portfolio, dynamic_sizer)
         executor = ExecutionEngine(client, risk_mgr, portfolio)
         aggregator = SignalAggregator(min_composite_edge=self.config.trading.min_edge_threshold)
+        regime_detector = RegimeDetector()
 
         # Initialize strategies
         strat_instances = []
@@ -143,7 +152,6 @@ class BacktestEngine:
         odds_agg = OddsAggregator()
 
         if "sentiment" in enabled:
-            # Lower min_tweets for simulation (simulator generates 5-100 tweets)
             sim_sentiment_config = SentimentConfig(
                 min_tweets=3,
                 volume_spike_threshold=self.config.sentiment.volume_spike_threshold,
@@ -158,6 +166,12 @@ class BacktestEngine:
             strat_instances.append(MarketMakerStrategy(self.config.market_maker))
         if "arbitrage" in enabled:
             strat_instances.append(ArbitrageStrategy(self.config.arbitrage, odds_agg))
+        if "momentum" in enabled:
+            strat_instances.append(MomentumStrategy(min_edge=self.config.trading.min_edge_threshold))
+        if "contrarian" in enabled:
+            strat_instances.append(ContrarianStrategy(min_edge=self.config.trading.min_edge_threshold))
+        if "time_decay" in enabled:
+            strat_instances.append(TimeDecayStrategy(min_edge=self.config.trading.min_edge_threshold))
 
         # ── Simulation Loop ──────────────────────────────────────
         portfolio_values = [self.initial_capital]
@@ -171,15 +185,18 @@ class BacktestEngine:
             # 1. Advance prices
             self.simulator.step_prices(sim_markets)
 
-            # 2. Update simulated prices in paper client
+            # 2. Update simulated prices and volumes in paper client
             prices = {}
+            volumes = {}
             for sim in sim_markets:
                 for token in sim.market.tokens:
                     prices[token.token_id] = token.price
+                    volumes[token.token_id] = sim.market.volume_24h
             client.set_simulated_prices(prices)
+            client.set_simulated_volumes(volumes)
             portfolio.update_prices(prices)
 
-            # 3. Generate order books and context
+            # 3. Generate order books, context, and detect regimes
             markets = [sim.market for sim in sim_markets]
             order_books: dict[str, OrderBook] = {}
             context: dict[str, Any] = {"positions": {tid: pos for tid, pos in portfolio.positions.items()}}
@@ -192,8 +209,13 @@ class BacktestEngine:
                 sentiment = self.simulator.generate_sentiment(sim)
                 context[f"sentiment_{sim.market.condition_id}"] = sentiment
 
-                # Add price history for crypto mean-reversion
+                # Add price history for momentum/contrarian/mean-reversion
                 context[f"price_history_{sim.market.condition_id}"] = sim.price_history.copy()
+
+                # Detect market regime
+                if len(sim.price_history) >= 30:
+                    regime_state = regime_detector.detect(sim.price_history)
+                    context[f"regime_{sim.market.condition_id}"] = regime_state.regime.value
 
             # 4. Generate signals from all strategies
             all_signals = []
@@ -208,9 +230,19 @@ class BacktestEngine:
             ranked_signals = aggregator.aggregate(all_signals)
 
             # 6. Execute top signals (limit to avoid over-trading)
-            top_signals = ranked_signals[:5]
+            top_signals = ranked_signals[:7]
             results = executor.execute_signals(top_signals)
-            all_trades.extend([r for r in results if r.success])
+            for r in results:
+                if r.success:
+                    all_trades.append(r)
+                    # Feed outcome to dynamic Kelly sizer
+                    edge_used = next(
+                        (s.edge for s in top_signals if s.token_id == r.order.token_id), 0.05
+                    )
+                    # Approximate immediate P&L for Kelly tracking
+                    current_price = prices.get(r.order.token_id, r.fill_price)
+                    pnl_approx = (current_price - r.fill_price) * r.fill_size if r.order.side == Side.BUY else (r.fill_price - current_price) * r.fill_size
+                    dynamic_sizer.record_outcome(edge_used, pnl_approx)
 
             # 7. Check stop losses and liquidation
             if risk_mgr.needs_liquidation():

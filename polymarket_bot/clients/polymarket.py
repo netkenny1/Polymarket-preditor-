@@ -264,8 +264,8 @@ class PolymarketClient:
 class PaperTradingClient(PolymarketClient):
     """Simulated client for paper trading / backtesting.
 
-    Overrides order execution to simulate fills locally while still
-    fetching real market data when available.
+    Overrides order execution to simulate fills locally with realistic
+    slippage, partial fills, and market impact modeling.
     """
 
     def __init__(self, config: PolymarketConfig) -> None:
@@ -273,10 +273,16 @@ class PaperTradingClient(PolymarketClient):
         self.simulated_orders: list[Order] = []
         self.simulated_fills: list[TradeResult] = []
         self._simulated_prices: dict[str, float] = {}
+        self._simulated_volumes: dict[str, float] = {}  # For market impact
+        self._order_books: dict[str, list[tuple[float, float]]] = {}  # Simplified books
 
     def set_simulated_prices(self, prices: dict[str, float]) -> None:
         """Set simulated prices for backtesting."""
         self._simulated_prices = prices
+
+    def set_simulated_volumes(self, volumes: dict[str, float]) -> None:
+        """Set simulated market volumes for impact modeling."""
+        self._simulated_volumes = volumes
 
     def get_midpoint(self, token_id: str) -> Optional[float]:
         """Return simulated price if available, else try real API."""
@@ -296,8 +302,42 @@ class PaperTradingClient(PolymarketClient):
         market_condition_id: str = "",
         strategy: str = "",
     ) -> TradeResult:
-        """Simulate order execution with instant fill at limit price."""
+        """Simulate order execution with realistic slippage model.
+
+        Slippage model accounts for:
+        1. Base spread cost (~0.5% per side)
+        2. Market impact: larger orders move the price more
+        3. Partial fills: very large orders may not fully fill
+        """
         from polymarket_bot.utils.helpers import generate_order_id
+
+        # ── Slippage model ───────────────────────────────────────
+        # Base slippage: half the typical spread
+        base_slippage = 0.005
+
+        # Market impact: increases with order size relative to market volume
+        market_vol = self._simulated_volumes.get(token_id, 5000.0)
+        order_value = size * price
+        impact_ratio = order_value / max(market_vol, 100.0)
+        market_impact = impact_ratio * 0.02  # 2% impact per 100% of daily volume
+
+        total_slippage = base_slippage + market_impact
+
+        if side == Side.BUY:
+            fill_price = price * (1 + total_slippage)
+        else:
+            fill_price = price * (1 - total_slippage)
+
+        # Clamp fill price to valid range
+        fill_price = max(0.01, min(0.99, fill_price))
+
+        # ── Partial fill model ───────────────────────────────────
+        # Very large orders relative to market may partially fill
+        if impact_ratio > 0.3:
+            fill_ratio = max(0.5, 1.0 - (impact_ratio - 0.3))
+            fill_size = size * fill_ratio
+        else:
+            fill_size = size
 
         order = Order(
             order_id=generate_order_id("paper"),
@@ -306,22 +346,21 @@ class PaperTradingClient(PolymarketClient):
             side=side,
             price=price,
             size=size,
-            status=OrderStatus.FILLED,
-            filled_size=size,
+            status=OrderStatus.FILLED if fill_size == size else OrderStatus.PARTIAL,
+            filled_size=fill_size,
             strategy=strategy,
         )
         self.simulated_orders.append(order)
 
-        # Simulate 0.1% slippage
-        slippage = 0.001
-        fill_price = price * (1 + slippage) if side == Side.BUY else price * (1 - slippage)
+        # Polymarket charges ~1% taker fee on fill
+        fees = fill_size * fill_price * 0.002
 
         result = TradeResult(
             order=order,
             success=True,
             fill_price=fill_price,
-            fill_size=size,
-            fees=size * fill_price * 0.001,  # 0.1% fee estimate
+            fill_size=fill_size,
+            fees=fees,
         )
         self.simulated_fills.append(result)
 
@@ -329,8 +368,9 @@ class PaperTradingClient(PolymarketClient):
             "paper_trade_executed",
             order_id=order.order_id,
             side=side.value,
-            price=fill_price,
-            size=size,
+            price=round(fill_price, 4),
+            size=round(fill_size, 2),
+            slippage=round(total_slippage, 4),
         )
         return result
 

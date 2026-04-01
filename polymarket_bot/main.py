@@ -38,14 +38,19 @@ from polymarket_bot.config import BotConfig
 from polymarket_bot.data.models import Market, OrderBook
 from polymarket_bot.data.store import DataStore
 from polymarket_bot.execution.engine import ExecutionEngine
+from polymarket_bot.risk.dynamic_kelly import DynamicKellySizer
 from polymarket_bot.risk.manager import RiskManager
 from polymarket_bot.risk.portfolio import Portfolio
 from polymarket_bot.risk.position_sizer import PositionSizer
 from polymarket_bot.strategies.arbitrage import ArbitrageStrategy
+from polymarket_bot.strategies.contrarian import ContrarianStrategy
 from polymarket_bot.strategies.market_maker import MarketMakerStrategy
+from polymarket_bot.strategies.market_regime import RegimeDetector
+from polymarket_bot.strategies.momentum import MomentumStrategy
 from polymarket_bot.strategies.sentiment import SentimentStrategy
 from polymarket_bot.strategies.signals import SignalAggregator
 from polymarket_bot.strategies.statistical import StatisticalStrategy
+from polymarket_bot.strategies.time_decay import TimeDecayStrategy
 
 logger = structlog.get_logger()
 
@@ -85,7 +90,7 @@ class TradingBot:
         self.portfolio = Portfolio(
             initial_cash=self.config.trading.max_portfolio_exposure_usd
         )
-        self.sizer = PositionSizer(self.config.trading, self.config.risk)
+        self.sizer = DynamicKellySizer(self.config.trading, self.config.risk)
         self.risk_manager = RiskManager(
             self.config.risk, self.config.trading, self.portfolio, self.sizer
         )
@@ -95,12 +100,18 @@ class TradingBot:
             self.poly_client, self.risk_manager, self.portfolio
         )
 
-        # Strategies
+        # Regime detection
+        self.regime_detector = RegimeDetector()
+
+        # Strategies (7 total)
         self.strategies = [
             SentimentStrategy(self.twitter_client, self.config.sentiment),
             StatisticalStrategy(self.odds_aggregator, self.config.trading.min_edge_threshold),
             MarketMakerStrategy(self.config.market_maker),
             ArbitrageStrategy(self.config.arbitrage, self.odds_aggregator),
+            MomentumStrategy(min_edge=self.config.trading.min_edge_threshold),
+            ContrarianStrategy(min_edge=self.config.trading.min_edge_threshold),
+            TimeDecayStrategy(min_edge=self.config.trading.min_edge_threshold),
         ]
 
         self.aggregator = SignalAggregator(

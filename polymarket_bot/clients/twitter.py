@@ -15,58 +15,135 @@ from polymarket_bot.data.models import SentimentData
 
 logger = structlog.get_logger()
 
-# Simple lexicon-based sentiment scoring (no heavy NLP dependency)
-POSITIVE_WORDS = frozenset([
-    "bullish", "moon", "pump", "surge", "rally", "win", "winning", "victory",
-    "up", "rise", "rising", "soar", "spike", "boom", "breakout", "strong",
-    "confident", "certain", "definitely", "absolutely", "crushing", "dominating",
-    "landslide", "yes", "confirmed", "agreed", "positive", "great", "amazing",
-    "excellent", "ahead", "leading", "favored", "likely", "probable", "lock",
+# Weighted lexicon: (word -> sentiment weight)
+# Higher absolute weight = stronger signal. This gives more nuance
+# than a binary positive/negative classification.
+WEIGHTED_LEXICON: dict[str, float] = {
+    # Strong positive (1.5-2.0)
+    "landslide": 2.0, "crushing": 1.8, "dominating": 1.8, "lock": 1.7,
+    "certain": 1.6, "confirmed": 1.5, "absolutely": 1.5,
+    # Medium positive (1.0-1.4)
+    "bullish": 1.3, "moon": 1.2, "surge": 1.2, "rally": 1.2, "breakout": 1.2,
+    "victory": 1.1, "winning": 1.1, "soar": 1.1, "boom": 1.1,
+    "excellent": 1.0, "amazing": 1.0, "great": 1.0,
+    # Mild positive (0.5-0.9)
+    "win": 0.9, "pump": 0.9, "strong": 0.8, "confident": 0.8, "positive": 0.8,
+    "favored": 0.8, "likely": 0.7, "probable": 0.7, "ahead": 0.7,
+    "leading": 0.7, "rise": 0.6, "rising": 0.6, "up": 0.5, "yes": 0.5,
+    "agreed": 0.5, "spike": 0.6, "definitely": 0.8,
+    # Strong negative (-1.5 to -2.0)
+    "impossible": -2.0, "collapse": -1.8, "crash": -1.7, "panic": -1.6,
+    "plunge": -1.5, "disaster": -1.5,
+    # Medium negative (-1.0 to -1.4)
+    "bearish": -1.3, "dump": -1.2, "selloff": -1.2, "defeat": -1.1,
+    "losing": -1.1, "terrible": -1.0, "awful": -1.0, "failed": -1.0,
+    # Mild negative (-0.5 to -0.9)
+    "lose": -0.9, "weak": -0.8, "fear": -0.8, "worried": -0.7,
+    "concerned": -0.7, "uncertain": -0.7, "unlikely": -0.7, "doubt": -0.7,
+    "drop": -0.6, "fall": -0.6, "falling": -0.6, "down": -0.5,
+    "behind": -0.6, "trailing": -0.6, "underdog": -0.5, "risky": -0.5,
+    "denied": -0.6, "negative": -0.6, "bust": -0.8, "breakdown": -0.7,
+    "sink": -0.6, "never": -0.6,
+}
+
+# Bigram patterns with sentiment scores (captures phrases unigrams miss)
+BIGRAM_SCORES: dict[tuple[str, str], float] = {
+    ("looking", "good"): 1.0, ("no", "chance"): -1.5, ("no", "way"): -1.3,
+    ("for", "sure"): 1.2, ("slam", "dunk"): 1.5, ("long", "shot"): -1.0,
+    ("easy", "win"): 1.3, ("big", "win"): 1.2, ("huge", "loss"): -1.3,
+    ("dead", "heat"): 0.0, ("too", "close"): 0.0, ("game", "over"): -1.2,
+    ("all", "in"): 1.0, ("going", "down"): -0.8, ("going", "up"): 0.8,
+    ("blown", "out"): -1.4, ("pulled", "ahead"): 1.0,
+    ("falling", "apart"): -1.3, ("coming", "back"): 0.8,
+    ("not", "happening"): -1.2, ("guaranteed", "win"): 1.5,
+    ("massive", "lead"): 1.4, ("close", "race"): 0.0,
+    ("red", "flag"): -0.8, ("green", "light"): 0.8,
+}
+
+# Intensifiers amplify the next sentiment word
+INTENSIFIERS: dict[str, float] = {
+    "very": 1.4, "extremely": 1.6, "incredibly": 1.5, "absolutely": 1.5,
+    "totally": 1.3, "completely": 1.4, "really": 1.3, "super": 1.3,
+    "hugely": 1.4, "massively": 1.5, "insanely": 1.5,
+}
+
+NEGATION_WORDS = frozenset([
+    "not", "no", "never", "don't", "doesn't", "won't", "isn't", "aren't",
+    "wasn't", "weren't", "can't", "cannot", "hardly", "barely", "neither",
 ])
 
-NEGATIVE_WORDS = frozenset([
-    "bearish", "dump", "crash", "plunge", "drop", "lose", "losing", "defeat",
-    "down", "fall", "falling", "sink", "collapse", "bust", "breakdown", "weak",
-    "uncertain", "unlikely", "no", "denied", "negative", "terrible", "awful",
-    "behind", "trailing", "underdog", "doubt", "risky", "failed", "impossible",
-    "never", "selloff", "panic", "fear", "worried", "concerned",
-])
-
-NEGATION_WORDS = frozenset(["not", "no", "never", "don't", "doesn't", "won't", "isn't", "aren't", "wasn't"])
+# Emoji sentiment (many prediction market tweets use these)
+EMOJI_SCORES: dict[str, float] = {
+    "🚀": 1.2, "🔥": 0.8, "💪": 0.8, "✅": 0.7, "🎯": 0.8,
+    "📈": 1.0, "📉": -1.0, "💀": -0.8, "😱": -0.7, "🐻": -1.0,
+    "🐂": 1.0, "⬆️": 0.5, "⬇️": -0.5, "❌": -0.7, "💰": 0.6,
+    "🏆": 1.0, "🤡": -0.6, "👑": 0.8, "⚠️": -0.5,
+}
 
 
 def score_text(text: str) -> float:
     """Score sentiment of text from -1 (bearish) to +1 (bullish).
 
-    Uses a lexicon approach with negation handling. This is intentionally
-    simple and fast - good enough for trading signals without needing
-    a large ML model.
+    Uses a weighted lexicon with:
+    - Intensity-weighted word scores (not binary)
+    - Bigram pattern matching for multi-word phrases
+    - Negation handling with scope (2-word window)
+    - Intensifier amplification
+    - Emoji sentiment scoring
     """
+    # Score emojis first (before lowercasing)
+    emoji_score = sum(
+        EMOJI_SCORES.get(char, 0.0)
+        for char in text
+        if char in EMOJI_SCORES
+    )
+
     words = re.findall(r'\b\w+\b', text.lower())
-    if not words:
+    if not words and emoji_score == 0:
         return 0.0
 
-    score = 0.0
+    score = emoji_score
+    total_weight = max(len(words), 1)
+
+    # ── Bigram scoring ───────────────────────────────────────
+    for i in range(len(words) - 1):
+        bigram = (words[i], words[i + 1])
+        if bigram in BIGRAM_SCORES:
+            score += BIGRAM_SCORES[bigram]
+
+    # ── Unigram scoring with negation and intensifiers ───────
     negate = False
+    negation_scope = 0  # Negation affects next 2 words
+    intensifier = 1.0
 
     for word in words:
         if word in NEGATION_WORDS:
             negate = True
+            negation_scope = 2
             continue
 
-        if word in POSITIVE_WORDS:
-            score += -1.0 if negate else 1.0
-            negate = False
-        elif word in NEGATIVE_WORDS:
-            score += 1.0 if negate else -1.0
-            negate = False
-        else:
-            negate = False
+        if word in INTENSIFIERS:
+            intensifier = INTENSIFIERS[word]
+            continue
 
-    # Normalize by word count to keep in [-1, 1] range
-    max_possible = len(words) * 0.5
-    if max_possible > 0:
-        score = max(-1.0, min(1.0, score / max_possible * 2))
+        if word in WEIGHTED_LEXICON:
+            word_score = WEIGHTED_LEXICON[word] * intensifier
+            if negate:
+                word_score *= -0.75  # Negation partially inverts
+            score += word_score
+            intensifier = 1.0
+
+        # Decay negation scope
+        if negation_scope > 0:
+            negation_scope -= 1
+            if negation_scope == 0:
+                negate = False
+        intensifier = 1.0  # Reset if not followed by sentiment word
+
+    # Normalize: scale by word count to keep in [-1, 1]
+    if total_weight > 0:
+        score = score / (total_weight * 0.3)
+        score = max(-1.0, min(1.0, score))
 
     return score
 
