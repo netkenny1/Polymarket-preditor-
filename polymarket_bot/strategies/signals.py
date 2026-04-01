@@ -24,10 +24,12 @@ logger = structlog.get_logger()
 STRATEGY_WEIGHTS: dict[str, float] = {
     "arbitrage": 1.5,     # Highest weight - near risk-free
     "statistical": 1.2,   # Strong models
+    "correlation": 1.1,   # Cross-market lead-lag (structural edge)
     "momentum": 1.1,      # Trend-following (strong in trending regimes)
     "contrarian": 1.1,    # Mean-reversion (strong in ranging regimes)
     "time_decay": 1.0,    # Expiry dynamics
     "sentiment": 1.0,     # Good but noisy
+    "microstructure": 0.9,  # Order book signals (fast-decaying edge)
     "market_maker": 0.8,  # Lower edge per trade but consistent
 }
 

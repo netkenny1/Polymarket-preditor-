@@ -37,10 +37,13 @@ from polymarket_bot.execution.engine import ExecutionEngine
 from polymarket_bot.risk.manager import RiskManager
 from polymarket_bot.risk.portfolio import Portfolio
 from polymarket_bot.risk.position_sizer import PositionSizer
+from polymarket_bot.execution.exit_manager import ExitManager
 from polymarket_bot.strategies.arbitrage import ArbitrageStrategy
 from polymarket_bot.strategies.contrarian import ContrarianStrategy
+from polymarket_bot.strategies.correlation import CorrelationStrategy
 from polymarket_bot.strategies.market_maker import MarketMakerStrategy
 from polymarket_bot.strategies.market_regime import RegimeDetector
+from polymarket_bot.strategies.microstructure import MicrostructureStrategy
 from polymarket_bot.strategies.momentum import MomentumStrategy
 from polymarket_bot.strategies.sentiment import SentimentStrategy
 from polymarket_bot.strategies.signals import SignalAggregator
@@ -132,7 +135,8 @@ class BacktestEngine:
         """
         enabled = strategies or [
             "sentiment", "statistical", "market_maker", "arbitrage",
-            "momentum", "contrarian", "time_decay",
+            "momentum", "contrarian", "time_decay", "correlation",
+            "microstructure",
         ]
 
         # ── Setup ────────────────────────────────────────────────
@@ -172,6 +176,12 @@ class BacktestEngine:
             strat_instances.append(ContrarianStrategy(min_edge=self.config.trading.min_edge_threshold))
         if "time_decay" in enabled:
             strat_instances.append(TimeDecayStrategy(min_edge=self.config.trading.min_edge_threshold))
+        if "correlation" in enabled:
+            strat_instances.append(CorrelationStrategy(min_edge=self.config.trading.min_edge_threshold))
+        if "microstructure" in enabled:
+            strat_instances.append(MicrostructureStrategy(min_edge=self.config.trading.min_edge_threshold))
+
+        exit_manager = ExitManager()
 
         # ── Simulation Loop ──────────────────────────────────────
         portfolio_values = [self.initial_capital]
@@ -243,6 +253,41 @@ class BacktestEngine:
                     current_price = prices.get(r.order.token_id, r.fill_price)
                     pnl_approx = (current_price - r.fill_price) * r.fill_size if r.order.side == Side.BUY else (r.fill_price - current_price) * r.fill_size
                     dynamic_sizer.record_outcome(edge_used, pnl_approx)
+
+            # 6b. Register new entries with exit manager and check exits
+            for r in results:
+                if r.success and r.order.side == Side.BUY:
+                    sig_edge = next(
+                        (s.edge for s in top_signals if s.token_id == r.order.token_id), 0.05
+                    )
+                    sim_market = next(
+                        (sm for sm in sim_markets if any(t.token_id == r.order.token_id for t in sm.market.tokens)),
+                        None,
+                    )
+                    end_date = sim_market.market.end_date if sim_market else None
+                    exit_manager.register_entry(r.order.token_id, sig_edge, r.fill_size, end_date)
+
+            exit_manager.advance_step()
+            exit_rules = exit_manager.check_exits(portfolio.positions)
+            for rule in exit_rules:
+                try:
+                    sell_size = rule.position.size * rule.sell_fraction
+                    price = round(rule.position.current_price * (1 - 0.005 * rule.urgency), 4)
+                    exit_result = client.place_order(
+                        token_id=rule.token_id,
+                        side=Side.SELL,
+                        price=max(0.01, price),
+                        size=sell_size,
+                        market_condition_id=rule.position.market_condition_id,
+                        strategy=f"exit_{rule.exit_type}",
+                    )
+                    if exit_result and exit_result.success:
+                        portfolio.process_fill(exit_result)
+                        all_trades.append(exit_result)
+                        if rule.sell_fraction >= 1.0:
+                            exit_manager.remove_position(rule.token_id)
+                except Exception:
+                    pass
 
             # 7. Check stop losses and liquidation
             if risk_mgr.needs_liquidation():

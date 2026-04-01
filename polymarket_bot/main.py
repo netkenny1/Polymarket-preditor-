@@ -35,17 +35,20 @@ from polymarket_bot.clients.odds_sources import OddsAggregator
 from polymarket_bot.clients.polymarket import PaperTradingClient, PolymarketClient
 from polymarket_bot.clients.twitter import MockTwitterClient, TwitterClient
 from polymarket_bot.config import BotConfig
-from polymarket_bot.data.models import Market, OrderBook
+from polymarket_bot.data.models import Market, OrderBook, Side
 from polymarket_bot.data.store import DataStore
 from polymarket_bot.execution.engine import ExecutionEngine
 from polymarket_bot.risk.dynamic_kelly import DynamicKellySizer
 from polymarket_bot.risk.manager import RiskManager
 from polymarket_bot.risk.portfolio import Portfolio
 from polymarket_bot.risk.position_sizer import PositionSizer
+from polymarket_bot.execution.exit_manager import ExitManager
 from polymarket_bot.strategies.arbitrage import ArbitrageStrategy
 from polymarket_bot.strategies.contrarian import ContrarianStrategy
+from polymarket_bot.strategies.correlation import CorrelationStrategy
 from polymarket_bot.strategies.market_maker import MarketMakerStrategy
 from polymarket_bot.strategies.market_regime import RegimeDetector
+from polymarket_bot.strategies.microstructure import MicrostructureStrategy
 from polymarket_bot.strategies.momentum import MomentumStrategy
 from polymarket_bot.strategies.sentiment import SentimentStrategy
 from polymarket_bot.strategies.signals import SignalAggregator
@@ -103,7 +106,10 @@ class TradingBot:
         # Regime detection
         self.regime_detector = RegimeDetector()
 
-        # Strategies (7 total)
+        # Exit manager
+        self.exit_manager = ExitManager()
+
+        # Strategies (9 total)
         self.strategies = [
             SentimentStrategy(self.twitter_client, self.config.sentiment),
             StatisticalStrategy(self.odds_aggregator, self.config.trading.min_edge_threshold),
@@ -112,6 +118,8 @@ class TradingBot:
             MomentumStrategy(min_edge=self.config.trading.min_edge_threshold),
             ContrarianStrategy(min_edge=self.config.trading.min_edge_threshold),
             TimeDecayStrategy(min_edge=self.config.trading.min_edge_threshold),
+            CorrelationStrategy(min_edge=self.config.trading.min_edge_threshold),
+            MicrostructureStrategy(min_edge=self.config.trading.min_edge_threshold),
         ]
 
         self.aggregator = SignalAggregator(
@@ -167,6 +175,42 @@ class TradingBot:
                 top = ranked[:10]  # Max 10 trades per cycle
                 results = self.executor.execute_signals(top)
                 summary["trades"] = sum(1 for r in results if r.success)
+
+                # Register new entries with exit manager
+                for r in results:
+                    if r.success and r.order.side == Side.BUY:
+                        sig = next((s for s in top if s.token_id == r.order.token_id), None)
+                        edge = sig.edge if sig else 0.05
+                        market = next((m for m in markets if any(t.token_id == r.order.token_id for t in m.tokens)), None)
+                        end_date = market.end_date if market else None
+                        self.exit_manager.register_entry(
+                            r.order.token_id, edge, r.fill_size, end_date,
+                        )
+
+            # 6b. Check exit manager for position exits
+            self.exit_manager.advance_step()
+            exit_rules = self.exit_manager.check_exits(self.portfolio.positions)
+            if exit_rules:
+                for rule in exit_rules:
+                    try:
+                        sell_size = rule.position.size * rule.sell_fraction
+                        price = round(rule.position.current_price * (1 - 0.005 * rule.urgency), 4)
+                        result = self.poly_client.place_order(
+                            token_id=rule.token_id,
+                            side=Side.SELL,
+                            price=max(0.01, price),
+                            size=sell_size,
+                            market_condition_id=rule.position.market_condition_id,
+                            strategy=f"exit_{rule.exit_type}",
+                        )
+                        if result and result.success:
+                            self.portfolio.process_fill(result)
+                            summary["exits"] = summary.get("exits", 0) + 1
+                            if rule.sell_fraction >= 1.0:
+                                self.exit_manager.remove_position(rule.token_id)
+                            logger.info("exit_executed", type=rule.exit_type, reason=rule.reason)
+                    except Exception as e:
+                        logger.error("exit_execution_error", error=str(e))
 
             # 7. Update prices and check stops
             prices = {}
