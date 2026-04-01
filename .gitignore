@@ -12,3 +12,4 @@ data/*.json
 data/*.csv
 logs/
 *.log
+.claude/
