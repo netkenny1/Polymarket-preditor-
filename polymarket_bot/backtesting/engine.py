@@ -41,6 +41,7 @@ from polymarket_bot.execution.exit_manager import ExitManager
 from polymarket_bot.strategies.arbitrage import ArbitrageStrategy
 from polymarket_bot.strategies.contrarian import ContrarianStrategy
 from polymarket_bot.strategies.correlation import CorrelationStrategy
+from polymarket_bot.strategies.event_catalyst import EventCatalystStrategy
 from polymarket_bot.strategies.market_maker import MarketMakerStrategy
 from polymarket_bot.strategies.market_regime import RegimeDetector
 from polymarket_bot.strategies.microstructure import MicrostructureStrategy
@@ -49,6 +50,7 @@ from polymarket_bot.strategies.sentiment import SentimentStrategy
 from polymarket_bot.strategies.signals import SignalAggregator
 from polymarket_bot.strategies.statistical import StatisticalStrategy
 from polymarket_bot.strategies.time_decay import TimeDecayStrategy
+from polymarket_bot.strategies.volatility import VolatilityStrategy
 from polymarket_bot.risk.dynamic_kelly import DynamicKellySizer
 from polymarket_bot.utils.helpers import calculate_sharpe_ratio
 
@@ -136,7 +138,7 @@ class BacktestEngine:
         enabled = strategies or [
             "sentiment", "statistical", "market_maker", "arbitrage",
             "momentum", "contrarian", "time_decay", "correlation",
-            "microstructure",
+            "microstructure", "volatility", "event_catalyst",
         ]
 
         # ── Setup ────────────────────────────────────────────────
@@ -180,6 +182,10 @@ class BacktestEngine:
             strat_instances.append(CorrelationStrategy(min_edge=self.config.trading.min_edge_threshold))
         if "microstructure" in enabled:
             strat_instances.append(MicrostructureStrategy(min_edge=self.config.trading.min_edge_threshold))
+        if "volatility" in enabled:
+            strat_instances.append(VolatilityStrategy(min_edge=self.config.trading.min_edge_threshold))
+        if "event_catalyst" in enabled:
+            strat_instances.append(EventCatalystStrategy(min_edge=self.config.trading.min_edge_threshold))
 
         exit_manager = ExitManager()
 

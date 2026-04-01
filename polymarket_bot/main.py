@@ -43,9 +43,11 @@ from polymarket_bot.risk.manager import RiskManager
 from polymarket_bot.risk.portfolio import Portfolio
 from polymarket_bot.risk.position_sizer import PositionSizer
 from polymarket_bot.execution.exit_manager import ExitManager
+from polymarket_bot.execution.smart_router import SmartOrderRouter
 from polymarket_bot.strategies.arbitrage import ArbitrageStrategy
 from polymarket_bot.strategies.contrarian import ContrarianStrategy
 from polymarket_bot.strategies.correlation import CorrelationStrategy
+from polymarket_bot.strategies.event_catalyst import EventCatalystStrategy
 from polymarket_bot.strategies.market_maker import MarketMakerStrategy
 from polymarket_bot.strategies.market_regime import RegimeDetector
 from polymarket_bot.strategies.microstructure import MicrostructureStrategy
@@ -54,6 +56,7 @@ from polymarket_bot.strategies.sentiment import SentimentStrategy
 from polymarket_bot.strategies.signals import SignalAggregator
 from polymarket_bot.strategies.statistical import StatisticalStrategy
 from polymarket_bot.strategies.time_decay import TimeDecayStrategy
+from polymarket_bot.strategies.volatility import VolatilityStrategy
 
 logger = structlog.get_logger()
 
@@ -106,10 +109,11 @@ class TradingBot:
         # Regime detection
         self.regime_detector = RegimeDetector()
 
-        # Exit manager
+        # Exit manager and smart router
         self.exit_manager = ExitManager()
+        self.smart_router = SmartOrderRouter()
 
-        # Strategies (9 total)
+        # Strategies (11 total)
         self.strategies = [
             SentimentStrategy(self.twitter_client, self.config.sentiment),
             StatisticalStrategy(self.odds_aggregator, self.config.trading.min_edge_threshold),
@@ -120,6 +124,8 @@ class TradingBot:
             TimeDecayStrategy(min_edge=self.config.trading.min_edge_threshold),
             CorrelationStrategy(min_edge=self.config.trading.min_edge_threshold),
             MicrostructureStrategy(min_edge=self.config.trading.min_edge_threshold),
+            VolatilityStrategy(min_edge=self.config.trading.min_edge_threshold),
+            EventCatalystStrategy(min_edge=self.config.trading.min_edge_threshold),
         ]
 
         self.aggregator = SignalAggregator(

@@ -27,6 +27,8 @@ STRATEGY_WEIGHTS: dict[str, float] = {
     "correlation": 1.1,   # Cross-market lead-lag (structural edge)
     "momentum": 1.1,      # Trend-following (strong in trending regimes)
     "contrarian": 1.1,    # Mean-reversion (strong in ranging regimes)
+    "event_catalyst": 1.05,  # Scheduled event mispricings
+    "volatility": 1.0,    # Vol clustering / Bollinger regime
     "time_decay": 1.0,    # Expiry dynamics
     "sentiment": 1.0,     # Good but noisy
     "microstructure": 0.9,  # Order book signals (fast-decaying edge)
