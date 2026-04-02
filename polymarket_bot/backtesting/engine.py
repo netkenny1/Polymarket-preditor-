@@ -50,6 +50,7 @@ from polymarket_bot.strategies.sentiment import SentimentStrategy
 from polymarket_bot.strategies.signals import SignalAggregator
 from polymarket_bot.strategies.statistical import StatisticalStrategy
 from polymarket_bot.strategies.time_decay import TimeDecayStrategy
+from polymarket_bot.strategies.btc_daily import BTCDailyStrategy
 from polymarket_bot.strategies.volatility import VolatilityStrategy
 from polymarket_bot.risk.dynamic_kelly import DynamicKellySizer
 from polymarket_bot.utils.helpers import calculate_sharpe_ratio
@@ -138,7 +139,7 @@ class BacktestEngine:
         enabled = strategies or [
             "sentiment", "statistical", "market_maker", "arbitrage",
             "momentum", "contrarian", "time_decay", "correlation",
-            "microstructure", "volatility", "event_catalyst",
+            "microstructure", "volatility", "event_catalyst", "btc_daily",
         ]
 
         # ── Setup ────────────────────────────────────────────────
@@ -186,6 +187,8 @@ class BacktestEngine:
             strat_instances.append(VolatilityStrategy(min_edge=self.config.trading.min_edge_threshold))
         if "event_catalyst" in enabled:
             strat_instances.append(EventCatalystStrategy(min_edge=self.config.trading.min_edge_threshold))
+        if "btc_daily" in enabled:
+            strat_instances.append(BTCDailyStrategy(min_edge=self.config.trading.min_edge_threshold))
 
         exit_manager = ExitManager()
 

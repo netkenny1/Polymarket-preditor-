@@ -27,7 +27,9 @@ STRATEGY_WEIGHTS: dict[str, float] = {
     "correlation": 1.1,   # Cross-market lead-lag (structural edge)
     "momentum": 1.1,      # Trend-following (strong in trending regimes)
     "contrarian": 1.1,    # Mean-reversion (strong in ranging regimes)
+    "btc_daily": 1.1,     # BTC direction (intraday momentum + seasonality)
     "event_catalyst": 1.05,  # Scheduled event mispricings
+    "news_reactor": 1.0,  # Breaking news / Trump tweet signals
     "volatility": 1.0,    # Vol clustering / Bollinger regime
     "time_decay": 1.0,    # Expiry dynamics
     "sentiment": 1.0,     # Good but noisy
