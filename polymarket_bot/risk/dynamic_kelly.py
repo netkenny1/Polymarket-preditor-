@@ -105,7 +105,7 @@ class DynamicKellySizer(PositionSizer):
             avg_predicted = np.mean(np.abs(list(self._recent_edges)[-10:]))
             avg_realized = np.mean(list(self._recent_pnls)[-10:])
             if avg_predicted > 0:
-                edge_accuracy = clamp(avg_realized / (avg_predicted * 100), 0.3, 2.0)
+                edge_accuracy = clamp(avg_realized / avg_predicted, 0.3, 1.5)
             else:
                 edge_accuracy = 1.0
         else:

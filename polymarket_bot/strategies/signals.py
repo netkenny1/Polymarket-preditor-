@@ -34,7 +34,7 @@ STRATEGY_WEIGHTS: dict[str, float] = {
     "time_decay": 1.0,    # Expiry dynamics
     "sentiment": 1.0,     # Good but noisy
     "microstructure": 0.9,  # Order book signals (fast-decaying edge)
-    "market_maker": 0.8,  # Lower edge per trade but consistent
+    "market_maker": 0.4,  # Lower edge per trade — reduced to avoid noise
     "narrative_analysis": 1.15,  # Historical pattern + multi-scenario consensus
 }
 
@@ -132,7 +132,7 @@ class SignalAggregator:
         avg_edge = weighted_edge / total_weight
 
         # Consensus bonus: multiple strategies agreeing boosts confidence
-        consensus_bonus = min(0.2, 0.1 * (len(signals) - 1))
+        consensus_bonus = min(0.35, 0.15 * (len(signals) - 1))
         combined_confidence = min(1.0, max_confidence + consensus_bonus)
 
         base = signals[0]

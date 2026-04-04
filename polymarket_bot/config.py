@@ -38,10 +38,10 @@ class TradingConfig:
     """Core trading parameters."""
 
     paper_trading: bool = True
-    max_portfolio_exposure_usd: float = 1000.0
-    max_single_position_usd: float = 100.0
-    min_edge_threshold: float = 0.04  # 4% minimum edge to trade
-    kelly_fraction: float = 0.20  # Fifth-Kelly for safety (conservative)
+    max_portfolio_exposure_usd: float = 50.0
+    max_single_position_usd: float = 15.0
+    min_edge_threshold: float = 0.02  # 2% minimum edge to trade
+    kelly_fraction: float = 0.10  # Tenth-Kelly for $100 capital safety
     max_positions: int = 20
     min_liquidity_usd: float = 500.0  # Skip illiquid markets
     max_spread: float = 0.10  # Skip markets with >10% spread
@@ -86,11 +86,11 @@ class RiskConfig:
     """Risk management parameters."""
 
     max_drawdown_pct: float = 0.20  # 20% max drawdown, halt trading
-    max_daily_loss_usd: float = 150.0
+    max_daily_loss_usd: float = 15.0
     max_correlated_exposure_pct: float = 0.40  # 40% in correlated markets
     position_limit_per_market_pct: float = 0.08  # 8% of portfolio per market
-    stop_loss_pct: float = 0.40  # 40% stop loss per position
-    trailing_stop_pct: float = 0.30  # 30% trailing stop
+    stop_loss_pct: float = 0.25  # 25% stop loss per position
+    trailing_stop_pct: float = 0.20  # 20% trailing stop
 
 
 @dataclass(frozen=True)

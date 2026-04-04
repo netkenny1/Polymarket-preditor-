@@ -70,8 +70,8 @@ class ExitManager:
 
     def __init__(
         self,
-        profit_target_1x: float = 0.08,   # Take 50% at 8% profit
-        profit_target_2x: float = 0.15,   # Take rest at 15% profit
+        profit_target_1x: float = 0.12,   # Take 50% at 12% profit
+        profit_target_2x: float = 0.25,   # Take rest at 25% profit
         max_hold_steps: int = 100,         # Close after 100 steps if flat
         stale_threshold: float = 0.02,     # Close if < 2% move after 30 steps
         stale_steps: int = 30,

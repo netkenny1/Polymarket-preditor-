@@ -180,6 +180,20 @@ def run_single_backtest(seed: int) -> DetailedResult:
         # Add economic context for narrative strategy
         context["economic_indicators"] = mock_econ.get_all_indicators()
 
+        # Add BTC price context for btc_daily strategy (simulated)
+        rng = np.random.RandomState(seed + step)
+        if step == 0:
+            btc_open = 60000.0 + rng.normal(0, 2000)
+            btc_price = btc_open
+        else:
+            btc_price = context.get("btc_price", 60000.0) * (1 + rng.normal(0.0002, 0.005))
+            if step % STEPS_PER_DAY == 0:
+                btc_open = btc_price  # New day open
+            else:
+                btc_open = context.get("btc_open_today", btc_price)
+        context["btc_price"] = btc_price
+        context["btc_open_today"] = btc_open
+
         # 4. Generate signals
         all_signals = []
         for strat in strategies:

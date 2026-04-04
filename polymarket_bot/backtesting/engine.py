@@ -53,6 +53,8 @@ from polymarket_bot.strategies.time_decay import TimeDecayStrategy
 from polymarket_bot.strategies.btc_daily import BTCDailyStrategy
 from polymarket_bot.strategies.volatility import VolatilityStrategy
 from polymarket_bot.risk.dynamic_kelly import DynamicKellySizer
+from polymarket_bot.clients.economic_data import MockEconomicDataClient
+from polymarket_bot.narrative.strategy import NarrativeStrategy
 from polymarket_bot.utils.helpers import calculate_sharpe_ratio
 
 logger = structlog.get_logger()
@@ -140,6 +142,7 @@ class BacktestEngine:
             "sentiment", "statistical", "market_maker", "arbitrage",
             "momentum", "contrarian", "time_decay", "correlation",
             "microstructure", "volatility", "event_catalyst", "btc_daily",
+            "narrative_analysis",
         ]
 
         # ── Setup ────────────────────────────────────────────────
@@ -189,6 +192,11 @@ class BacktestEngine:
             strat_instances.append(EventCatalystStrategy(min_edge=self.config.trading.min_edge_threshold))
         if "btc_daily" in enabled:
             strat_instances.append(BTCDailyStrategy(min_edge=self.config.trading.min_edge_threshold))
+        mock_econ = MockEconomicDataClient(seed=self.simulator.rng.randint(0, 10000))
+        if "narrative_analysis" in enabled:
+            strat_instances.append(NarrativeStrategy(
+                economic_client=mock_econ, min_edge=self.config.trading.min_edge_threshold, min_events=2,
+            ))
 
         exit_manager = ExitManager()
 
@@ -235,6 +243,25 @@ class BacktestEngine:
                 if len(sim.price_history) >= 30:
                     regime_state = regime_detector.detect(sim.price_history)
                     context[f"regime_{sim.market.condition_id}"] = regime_state.regime.value
+
+            # Add economic indicators for narrative strategy
+            if step % 5 == 0:
+                mock_econ.step()
+            context["economic_indicators"] = mock_econ.get_all_indicators()
+
+            # Add BTC price context for btc_daily strategy
+            if step == 0:
+                context["btc_price"] = 60000.0 + self.simulator.rng.normal(0, 2000)
+                context["btc_open_today"] = context["btc_price"]
+            else:
+                prev_btc = getattr(self, '_btc_price', 60000.0)
+                context["btc_price"] = prev_btc * (1 + self.simulator.rng.normal(0.0002, 0.005))
+                if step % 24 == 0:
+                    context["btc_open_today"] = context["btc_price"]
+                else:
+                    context["btc_open_today"] = getattr(self, '_btc_open', context["btc_price"])
+            self._btc_price = context["btc_price"]
+            self._btc_open = context["btc_open_today"]
 
             # 4. Generate signals from all strategies
             all_signals = []

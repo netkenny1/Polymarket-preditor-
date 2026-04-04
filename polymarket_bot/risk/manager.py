@@ -179,7 +179,7 @@ class RiskManager:
             self.daily_pnl = 0.0
             self.daily_reset_time = now
             # Also reset trading halt if drawdown has recovered
-            if self.trading_halted and self.portfolio.drawdown_pct < self.config.max_drawdown_pct * 0.8:
+            if self.trading_halted and self.portfolio.drawdown_pct < self.config.max_drawdown_pct * 0.5:
                 self.trading_halted = False
                 self.halt_reason = ""
                 logger.info("trading_resumed", drawdown=self.portfolio.drawdown_pct)
