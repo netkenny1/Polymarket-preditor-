@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Optional
 
@@ -249,3 +249,117 @@ class SentimentData:
     bearish_pct: float = 0.5
     sample_tweets: list[str] = field(default_factory=list)
     timestamp: datetime = field(default_factory=datetime.utcnow)
+
+
+class NarrativeCategory(str, Enum):
+    """Categories for narrative themes."""
+    TRADE_WAR = "trade_war"
+    MONETARY_POLICY = "monetary_policy"
+    GEOPOLITICAL = "geopolitical"
+    CRYPTO_REGULATION = "crypto_regulation"
+    FISCAL_POLICY = "fiscal_policy"
+    ELECTION = "election"
+    MARKET_CRISIS = "market_crisis"
+    OTHER = "other"
+
+
+@dataclass
+class EconomicIndicator:
+    """A single economic data point."""
+    name: str
+    value: float
+    previous_value: float
+    change_pct: float
+    unit: str = ""
+    timestamp: datetime = field(default_factory=datetime.utcnow)
+    source: str = ""
+    metadata: dict = field(default_factory=dict)
+
+
+@dataclass
+class NarrativeEvent:
+    """A discrete event that feeds into a narrative."""
+    event_id: str
+    source: str  # "trump_tweet", "economic_data", "news", "market_move"
+    content: str
+    timestamp: datetime
+    category: NarrativeCategory
+    sentiment: float  # -1 to 1
+    magnitude: float  # 0 to 1
+    keywords: list[str] = field(default_factory=list)
+    metadata: dict = field(default_factory=dict)
+
+
+@dataclass
+class HistoricalPhase:
+    """One phase within a historical pattern."""
+    phase_name: str
+    description: str
+    duration_days: int
+    market_impact: dict = field(default_factory=dict)  # {category: direction}
+    keywords: list[str] = field(default_factory=list)
+    sequence_index: int = 0
+
+
+@dataclass
+class HistoricalPattern:
+    """A codified historical precedent for predictive history."""
+    pattern_id: str
+    name: str
+    category: NarrativeCategory
+    description: str
+    trigger_keywords: list[str] = field(default_factory=list)
+    timeline_days: int = 0
+    market_impact: dict = field(default_factory=dict)  # {category: direction}
+    outcome_direction: float = 0.0  # -1 to 1
+    outcome_magnitude: float = 0.0  # 0 to 1
+    phases: list[HistoricalPhase] = field(default_factory=list)
+    similarity_threshold: float = 0.4
+    source_period: str = ""
+
+
+@dataclass
+class Narrative:
+    """A coherent story built from multiple events with predictive power."""
+    narrative_id: str
+    title: str
+    category: NarrativeCategory
+    thesis: str
+    events: list[NarrativeEvent] = field(default_factory=list)
+    affected_market_ids: list[str] = field(default_factory=list)
+    predicted_direction: float = 0.0  # -1 to 1
+    confidence: float = 0.0
+    strength: float = 0.0  # 0 to 1
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    historical_pattern_id: Optional[str] = None
+    is_active: bool = True
+
+    @property
+    def age_hours(self) -> float:
+        delta = datetime.now(timezone.utc) - self.created_at
+        return delta.total_seconds() / 3600.0
+
+    @property
+    def event_count(self) -> int:
+        return len(self.events)
+
+
+@dataclass
+class SimulationScenario:
+    """One parallel scenario in the council-of-agents system."""
+    scenario_id: str
+    name: str
+    narrative_id: str
+    assumptions: dict = field(default_factory=dict)
+    predicted_direction: float = 0.0
+    predicted_magnitude: float = 0.0
+    weight: float = 1.0
+    accuracy_history: list[float] = field(default_factory=list)
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+
+    @property
+    def avg_accuracy(self) -> float:
+        if not self.accuracy_history:
+            return 0.5
+        return sum(self.accuracy_history) / len(self.accuracy_history)

@@ -44,6 +44,8 @@ from polymarket_bot.strategies.signals import SignalAggregator
 from polymarket_bot.strategies.statistical import StatisticalStrategy
 from polymarket_bot.strategies.time_decay import TimeDecayStrategy
 from polymarket_bot.strategies.volatility import VolatilityStrategy
+from polymarket_bot.narrative.strategy import NarrativeStrategy
+from polymarket_bot.clients.economic_data import MockEconomicDataClient, EconomicDataClient
 
 logger = structlog.get_logger()
 
@@ -154,6 +156,9 @@ class AutonomousRunner:
         # Crypto feed
         self.crypto_feed = MockCryptoPriceFeed() if self.paper else CryptoPriceFeed()
 
+        # Economic data feed
+        self.economic_client = MockEconomicDataClient() if self.paper else EconomicDataClient()
+
         # Strategies (12 total)
         odds_agg = OddsAggregator()
         min_edge = self.config.trading.min_edge_threshold
@@ -170,6 +175,11 @@ class AutonomousRunner:
             VolatilityStrategy(min_edge=min_edge),
             EventCatalystStrategy(min_edge=min_edge),
             BTCDailyStrategy(min_edge=min_edge),
+            NarrativeStrategy(
+                economic_client=self.economic_client,
+                news_reactor=self.news_reactor,
+                min_edge=min_edge,
+            ),
         ]
 
         logger.info(
@@ -213,11 +223,20 @@ class AutonomousRunner:
         if not self._markets:
             return
 
-        # 2. Update crypto prices
+        # 2. Update crypto prices and economic data
         if isinstance(self.crypto_feed, MockCryptoPriceFeed):
             self.crypto_feed.step()
         btc_ctx = self.crypto_feed.get_btc_context()
         self._context.update(btc_ctx)
+
+        # Update economic data for narrative strategy
+        if isinstance(self.economic_client, MockEconomicDataClient):
+            self.economic_client.step()
+        self._context["economic_indicators"] = self.economic_client.get_all_indicators()
+
+        # Feed news events into context for narrative strategy
+        if self.news_reactor and hasattr(self.news_reactor, '_event_history'):
+            self._context["news_events"] = self.news_reactor._event_history[-50:]
 
         # 3. Fetch order books for top markets
         try:
@@ -374,10 +393,10 @@ class AutonomousRunner:
 {'='*60}
   Mode:           {mode}
   Budget:         ${self.budget_usd:,.2f}
-  Strategies:     12 (sentiment, statistical, market maker,
+  Strategies:     13 (sentiment, statistical, market maker,
                   arbitrage, momentum, contrarian, time decay,
                   correlation, microstructure, volatility,
-                  event catalyst, BTC daily)
+                  event catalyst, BTC daily, narrative analysis)
   Scan interval:  {self.scan_interval_minutes} minutes
   Trade interval: {self.trade_interval_minutes} minutes
   Max daily:      {self.max_daily_trades} trades

@@ -35,6 +35,7 @@ STRATEGY_WEIGHTS: dict[str, float] = {
     "sentiment": 1.0,     # Good but noisy
     "microstructure": 0.9,  # Order book signals (fast-decaying edge)
     "market_maker": 0.8,  # Lower edge per trade but consistent
+    "narrative_analysis": 1.15,  # Historical pattern + multi-scenario consensus
 }
 
 

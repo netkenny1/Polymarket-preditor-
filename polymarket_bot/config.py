@@ -93,6 +93,21 @@ class RiskConfig:
     trailing_stop_pct: float = 0.30  # 30% trailing stop
 
 
+@dataclass(frozen=True)
+class NarrativeConfig:
+    """Narrative analysis strategy parameters."""
+    max_active_narratives: int = 10
+    max_scenarios_per_narrative: int = 5
+    narrative_decay_hours: float = 48.0
+    min_events_for_narrative: int = 3
+    pattern_similarity_threshold: float = 0.4
+    scenario_evaluation_interval_steps: int = 5
+    min_narrative_confidence: float = 0.3
+    max_signal_confidence: float = 0.75
+    council_min_agreement: float = 0.6
+    council_size: int = 5
+
+
 @dataclass
 class BotConfig:
     """Master configuration aggregating all sub-configs."""
@@ -104,6 +119,7 @@ class BotConfig:
     sentiment: SentimentConfig = field(default_factory=SentimentConfig)
     arbitrage: ArbitrageConfig = field(default_factory=ArbitrageConfig)
     risk: RiskConfig = field(default_factory=RiskConfig)
+    narrative: NarrativeConfig = field(default_factory=NarrativeConfig)
 
     @classmethod
     def from_env(cls) -> BotConfig:

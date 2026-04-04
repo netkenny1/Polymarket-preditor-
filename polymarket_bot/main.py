@@ -57,6 +57,8 @@ from polymarket_bot.strategies.signals import SignalAggregator
 from polymarket_bot.strategies.statistical import StatisticalStrategy
 from polymarket_bot.strategies.time_decay import TimeDecayStrategy
 from polymarket_bot.strategies.volatility import VolatilityStrategy
+from polymarket_bot.narrative.strategy import NarrativeStrategy
+from polymarket_bot.clients.economic_data import MockEconomicDataClient, EconomicDataClient
 
 logger = structlog.get_logger()
 
@@ -92,6 +94,12 @@ class TradingBot:
         self.odds_aggregator = OddsAggregator()
         self.data_store = DataStore()
 
+        # Economic data
+        if self.config.trading.paper_trading:
+            self.economic_client = MockEconomicDataClient()
+        else:
+            self.economic_client = EconomicDataClient()
+
         # Portfolio and risk
         self.portfolio = Portfolio(
             initial_cash=self.config.trading.max_portfolio_exposure_usd
@@ -126,6 +134,10 @@ class TradingBot:
             MicrostructureStrategy(min_edge=self.config.trading.min_edge_threshold),
             VolatilityStrategy(min_edge=self.config.trading.min_edge_threshold),
             EventCatalystStrategy(min_edge=self.config.trading.min_edge_threshold),
+            NarrativeStrategy(
+                economic_client=self.economic_client,
+                min_edge=self.config.trading.min_edge_threshold,
+            ),
         ]
 
         self.aggregator = SignalAggregator(
@@ -251,6 +263,7 @@ class TradingBot:
         """Build strategy context with sentiment and position data."""
         context: dict[str, Any] = {
             "positions": {tid: pos for tid, pos in self.portfolio.positions.items()},
+            "economic_indicators": self.economic_client.get_all_indicators(),
         }
 
         # Fetch sentiment for markets

@@ -410,7 +410,7 @@ class TestPhase5Backtest:
         runner._initialize()
         assert runner.portfolio is not None
         assert runner.portfolio.cash == 100.0
-        assert len(runner.strategies) == 12
+        assert len(runner.strategies) == 13
 
 
 # ── Signal Weight Tests ────────────────────────────────────────
