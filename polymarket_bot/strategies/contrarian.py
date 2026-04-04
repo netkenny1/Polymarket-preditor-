@@ -41,8 +41,8 @@ class ContrarianStrategy(BaseStrategy):
     def __init__(
         self,
         lookback: int = 30,
-        z_threshold: float = 1.8,
-        min_edge: float = 0.04,
+        z_threshold: float = 1.3,
+        min_edge: float = 0.02,
         max_reversion_pct: float = 0.50,
     ) -> None:
         self.lookback = lookback
@@ -64,10 +64,15 @@ class ContrarianStrategy(BaseStrategy):
             if len(price_history) < self.lookback + 1:
                 continue
 
-            # Skip if market is in trending regime (don't fight trends)
+            # Skip only very strong trends (allow contrarian in weak trends)
             regime = context.get(f"regime_{market.condition_id}", "unknown")
             if regime == "trending":
-                continue
+                # Check if trend is strong via price history slope
+                ph = context.get(f"price_history_{market.condition_id}", [])
+                if len(ph) >= 10:
+                    slope = abs(ph[-1] - ph[-10]) / 10
+                    if slope > 0.01:  # Strong trend — skip
+                        continue
 
             try:
                 signal = self._analyze(market, price_history, order_books, context)
@@ -108,7 +113,7 @@ class ContrarianStrategy(BaseStrategy):
         avg_move = np.mean(np.abs(np.diff(lookback_data)))
         speed_ratio = move_speed / max(avg_move, 0.001)
 
-        if speed_ratio < 1.5:
+        if speed_ratio < 1.2:
             return None  # Move was too gradual - more likely a real shift
 
         # ── Estimate reversion target ────────────────────────────

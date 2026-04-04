@@ -72,9 +72,9 @@ class ExitManager:
         self,
         profit_target_1x: float = 0.12,   # Take 50% at 12% profit
         profit_target_2x: float = 0.25,   # Take rest at 25% profit
-        max_hold_steps: int = 100,         # Close after 100 steps if flat
-        stale_threshold: float = 0.02,     # Close if < 2% move after 30 steps
-        stale_steps: int = 30,
+        max_hold_steps: int = 150,         # Close after 150 steps if flat
+        stale_threshold: float = 0.04,     # Close if < 4% move after 50 steps
+        stale_steps: int = 50,
         resolution_hours_threshold: float = 4.0,  # Close 4h before resolution
     ) -> None:
         self.profit_target_1x = profit_target_1x

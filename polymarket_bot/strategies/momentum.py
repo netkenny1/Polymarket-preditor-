@@ -42,7 +42,7 @@ class MomentumStrategy(BaseStrategy):
         short_window: int = 5,
         medium_window: int = 20,
         long_window: int = 50,
-        min_edge: float = 0.04,
+        min_edge: float = 0.02,
         acceleration_threshold: float = 0.002,
     ) -> None:
         self.short_window = short_window
@@ -138,7 +138,7 @@ class MomentumStrategy(BaseStrategy):
                 trend_score *= 1.2
 
         # ── Signal generation ────────────────────────────────────
-        if abs(trend_score) < 0.2:
+        if abs(trend_score) < 0.12:
             return None  # No strong trend
 
         # Project fair value based on momentum continuation

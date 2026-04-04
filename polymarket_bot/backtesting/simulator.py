@@ -97,7 +97,7 @@ class MarketSimulator:
             sim = SimulatedMarket(
                 market=market,
                 true_probability=true_prob,
-                volatility=self.rng.uniform(0.01, 0.05),
+                volatility=self.rng.uniform(0.02, 0.08),
                 price_history=[initial_price],
             )
             markets.append(sim)
@@ -115,7 +115,7 @@ class MarketSimulator:
             current = sim.price_history[-1]
 
             # Mean reversion toward true probability
-            reversion = 0.02 * (sim.true_probability - current)
+            reversion = 0.005 * (sim.true_probability - current)
 
             # Random noise
             noise = self.rng.normal(0, sim.volatility)
@@ -138,7 +138,7 @@ class MarketSimulator:
         books = {}
         for token in sim.market.tokens:
             mid = token.price
-            spread = self.rng.uniform(0.01, 0.04)
+            spread = self.rng.uniform(0.01, 0.06)
 
             bids = []
             asks = []

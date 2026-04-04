@@ -92,8 +92,9 @@ class PositionSizer:
         if kelly_size <= 0:
             return 0.0
 
-        # 2. Scale by confidence (reduce size for uncertain signals)
-        confidence_scaled = kelly_size * signal.confidence
+        # 2. Scale by confidence (moderate scaling — Kelly already accounts for edge)
+        confidence_bonus = 1.0 + (signal.confidence - 0.5) * 0.4
+        confidence_scaled = kelly_size * clamp(confidence_bonus, 0.5, 1.2)
 
         # 3. Apply hard limits
         max_position = self.trading.max_single_position_usd
@@ -107,8 +108,8 @@ class PositionSizer:
             per_market_limit,
         )
 
-        # 4. Minimum viable trade (don't place tiny orders)
-        min_trade = 1.0  # $1 minimum
+        # 4. Minimum viable trade (scale with portfolio size)
+        min_trade = max(0.10, portfolio_value * 0.005)  # 0.5% of capital or $0.10
         if size < min_trade:
             return 0.0
 

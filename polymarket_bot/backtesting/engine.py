@@ -255,7 +255,7 @@ class BacktestEngine:
                 context["btc_open_today"] = context["btc_price"]
             else:
                 prev_btc = getattr(self, '_btc_price', 60000.0)
-                context["btc_price"] = prev_btc * (1 + self.simulator.rng.normal(0.0002, 0.005))
+                context["btc_price"] = prev_btc * (1 + self.simulator.rng.normal(0.0001, 0.02))
                 if step % 24 == 0:
                     context["btc_open_today"] = context["btc_price"]
                 else:

@@ -98,7 +98,7 @@ def run_single_backtest(seed: int) -> DetailedResult:
     dynamic_sizer = DynamicKellySizer(config.trading, config.risk)
     risk_mgr = RiskManager(config.risk, config.trading, portfolio, dynamic_sizer)
     executor = ExecutionEngine(client, risk_mgr, portfolio)
-    aggregator = SignalAggregator(min_composite_edge=config.trading.min_edge_threshold)
+    aggregator = SignalAggregator(min_composite_edge=0.015)  # Lower than individual min_edge to reward consensus
     regime_detector = RegimeDetector()
     exit_manager = ExitManager()
 
@@ -180,13 +180,13 @@ def run_single_backtest(seed: int) -> DetailedResult:
         # Add economic context for narrative strategy
         context["economic_indicators"] = mock_econ.get_all_indicators()
 
-        # Add BTC price context for btc_daily strategy (simulated)
+        # Add BTC price context for btc_daily strategy (realistic volatility)
         rng = np.random.RandomState(seed + step)
         if step == 0:
-            btc_open = 60000.0 + rng.normal(0, 2000)
+            btc_open = 60000.0 + rng.normal(0, 3000)
             btc_price = btc_open
         else:
-            btc_price = context.get("btc_price", 60000.0) * (1 + rng.normal(0.0002, 0.005))
+            btc_price = context.get("btc_price", 60000.0) * (1 + rng.normal(0.0001, 0.02))
             if step % STEPS_PER_DAY == 0:
                 btc_open = btc_price  # New day open
             else:
@@ -378,6 +378,205 @@ def print_equity_curve(values: list[float], width: int = 50) -> str:
     return "\n".join(lines)
 
 
+def print_calendar_view(results: list[DetailedResult]) -> None:
+    """Display a calendar-type visualization showing daily P/L across all simulations."""
+
+    num_days = TIME_STEPS // STEPS_PER_DAY  # 8 days (Day 0..7)
+
+    # ── 1. Compute daily P/L for each seed ──────────────────────
+    # daily_values is a list of end-of-day portfolio values starting with
+    # initial capital at index 0, so daily P/L for day d = daily_values[d+1] - daily_values[d].
+    # Some seeds may have fewer entries if the simulation didn't fill all days.
+    all_daily_pnl: list[list[float]] = []  # [seed_idx][day]
+    for dr in results:
+        dv = dr.daily_values
+        pnls: list[float] = []
+        for d in range(num_days):
+            if d + 1 < len(dv):
+                pnls.append(dv[d + 1] - dv[d])
+            else:
+                pnls.append(0.0)
+        all_daily_pnl.append(pnls)
+
+    # ── Header ──────────────────────────────────────────────────
+    col_w = 10
+    print()
+    print(f"{'=' * 72}")
+    title = f"DAY-BY-DAY P&L CALENDAR ({len(results)} simulations)"
+    print(f"  {title:^68s}")
+    print(f"{'=' * 72}")
+    print()
+
+    # Column headers
+    header = f"  {'Seed':>4s} │"
+    sep = f"  {'─' * 4}─┼"
+    for d in range(num_days):
+        header += f"{'Day ' + str(d):^{col_w}s}│"
+        sep += f"{'─' * col_w}┼"
+    header += f"{'Total':^{col_w}s}"
+    sep += f"{'─' * col_w}"
+    print(header)
+    print(sep)
+
+    # ── 2. Per-seed rows ────────────────────────────────────────
+    def fmt_pnl(val: float) -> str:
+        if val >= 0:
+            return f"+${val:>.2f}"
+        else:
+            return f"-${abs(val):>.2f}"
+
+    for i, dr in enumerate(results):
+        pnls = all_daily_pnl[i]
+        total_pnl = sum(pnls)
+        row = f"  {dr.seed:>4d} │"
+        for d in range(num_days):
+            cell = fmt_pnl(pnls[d])
+            row += f"{cell:^{col_w}s}│"
+        row += f"{fmt_pnl(total_pnl):^{col_w}s}"
+        print(row)
+
+    # ── 3. Daily aggregate row (mean) ───────────────────────────
+    print(f"  {'─' * 4}─┼" + (f"{'─' * col_w}┼" * num_days) + f"{'─' * col_w}")
+    mean_row = f"  {'Mean':>4s} │"
+    daily_means: list[float] = []
+    for d in range(num_days):
+        day_vals = [all_daily_pnl[i][d] for i in range(len(results))]
+        m = float(np.mean(day_vals))
+        daily_means.append(m)
+        mean_row += f"{fmt_pnl(m):^{col_w}s}│"
+    total_mean = sum(daily_means)
+    mean_row += f"{fmt_pnl(total_mean):^{col_w}s}"
+    print(mean_row)
+    print()
+
+    # ── 4. Day-over-day heatmap ─────────────────────────────────
+    print(f"  DAY-OVER-DAY HEATMAP")
+    print(f"  Legend: ████ = big win (>$20)  ▓▓▓ = win ($5-$20)  ░░░ = small win ($0-$5)")
+    print(f"         ··· = small loss ($0 to -$5)  XXXX = loss (< -$5)")
+    print()
+
+    def heatmap_char(val: float) -> str:
+        if val > 20:
+            return "████"
+        elif val > 5:
+            return "▓▓▓ "
+        elif val >= 0:
+            return "░░░ "
+        elif val > -5:
+            return "··· "
+        else:
+            return "XXXX"
+
+    hm_col = 6
+    hm_header = f"  {'Seed':>4s} │"
+    for d in range(num_days):
+        hm_header += f" {'D' + str(d):^{hm_col - 1}s}"
+    print(hm_header)
+    print(f"  {'─' * 4}─┼" + f"{'─' * hm_col}" * num_days)
+
+    for i, dr in enumerate(results):
+        pnls = all_daily_pnl[i]
+        row = f"  {dr.seed:>4d} │"
+        for d in range(num_days):
+            row += f" {heatmap_char(pnls[d]):<{hm_col - 1}s}"
+        print(row)
+    print()
+
+    # ── 5. Cumulative daily returns chart (mean, P10, P90) ──────
+    print(f"  CUMULATIVE RETURNS — Mean (●), P10 (▽), P90 (△)")
+    print()
+
+    # Build cumulative returns per seed per day
+    cum_by_seed: list[list[float]] = []
+    for i in range(len(results)):
+        cum = []
+        running = 0.0
+        for d in range(num_days):
+            running += all_daily_pnl[i][d]
+            cum.append(running)
+        cum_by_seed.append(cum)
+
+    # Compute mean, P10, P90 per day
+    cum_mean: list[float] = []
+    cum_p10: list[float] = []
+    cum_p90: list[float] = []
+    for d in range(num_days):
+        day_cum = [cum_by_seed[i][d] for i in range(len(results))]
+        cum_mean.append(float(np.mean(day_cum)))
+        cum_p10.append(float(np.percentile(day_cum, 10)))
+        cum_p90.append(float(np.percentile(day_cum, 90)))
+
+    # Determine chart bounds
+    all_vals = cum_p10 + cum_p90 + cum_mean
+    chart_min = min(all_vals)
+    chart_max = max(all_vals)
+    chart_range = chart_max - chart_min if chart_max != chart_min else 1.0
+    chart_height = 15
+    chart_width = num_days * 8
+
+    # Build the chart as a grid
+    grid = [[" " for _ in range(chart_width)] for _ in range(chart_height)]
+
+    def y_pos(val: float) -> int:
+        pos = int((val - chart_min) / chart_range * (chart_height - 1))
+        return max(0, min(chart_height - 1, chart_height - 1 - pos))
+
+    # Plot zero line if in range
+    if chart_min <= 0 <= chart_max:
+        zero_y = y_pos(0.0)
+        for x in range(chart_width):
+            if grid[zero_y][x] == " ":
+                grid[zero_y][x] = "─"
+
+    # Plot P10-P90 band and mean for each day
+    for d in range(num_days):
+        x = d * 8 + 4  # Center in the day column
+        if x >= chart_width:
+            break
+        y_lo = y_pos(cum_p10[d])
+        y_hi = y_pos(cum_p90[d])
+        y_m = y_pos(cum_mean[d])
+        # Draw band
+        for y in range(min(y_hi, y_lo), max(y_hi, y_lo) + 1):
+            if 0 <= y < chart_height and 0 <= x < chart_width:
+                grid[y][x] = "│"
+        # Draw P10, P90, mean markers
+        if 0 <= y_lo < chart_height and 0 <= x < chart_width:
+            grid[y_lo][x] = "▽"
+        if 0 <= y_hi < chart_height and 0 <= x < chart_width:
+            grid[y_hi][x] = "△"
+        if 0 <= y_m < chart_height and 0 <= x < chart_width:
+            grid[y_m][x] = "●"
+
+    # Print chart
+    for y in range(chart_height):
+        # Left axis label
+        val = chart_max - (y / (chart_height - 1)) * chart_range
+        line = f"  ${val:>+8.2f} │{''.join(grid[y])}"
+        print(line)
+
+    # X-axis
+    x_axis = f"  {'':>9s} └"
+    for d in range(num_days):
+        label = f"Day {d}"
+        x_axis += f"{label:^8s}"
+    print(x_axis)
+    print()
+
+    # Summary stats
+    print(f"  Day-by-day summary:")
+    for d in range(num_days):
+        day_vals = [all_daily_pnl[i][d] for i in range(len(results))]
+        winners = sum(1 for v in day_vals if v > 0)
+        print(
+            f"    Day {d}: mean {fmt_pnl(daily_means[d]):>9s} | "
+            f"P10 {fmt_pnl(float(np.percentile(day_vals, 10))):>9s} | "
+            f"P90 {fmt_pnl(float(np.percentile(day_vals, 90))):>9s} | "
+            f"winners {winners}/{len(results)}"
+        )
+    print()
+
+
 def main():
     print(f"""
 {'='*72}
@@ -536,6 +735,9 @@ def main():
     for label, count in buckets:
         bar = "#" * (count * 3)
         print(f"  {label:>16s}: {count:>2d} {bar}")
+
+    # ── Calendar View ───────────────────────────────────────────
+    print_calendar_view(all_results)
 
     print(f"\n{'='*72}")
     print(f"  Simulation complete. {profitable}/{NUM_SEEDS} seeds profitable.")

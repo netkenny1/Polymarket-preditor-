@@ -65,9 +65,15 @@ class RiskManager:
         # Reset daily P&L tracker if new day
         self._maybe_reset_daily()
 
-        # Circuit breaker checks
+        # Circuit breaker checks — use reduced sizing instead of hard halt
+        recovery_multiplier = 1.0
         if self.trading_halted:
-            return False, 0.0, f"Trading halted: {self.halt_reason}"
+            # Allow trading to resume with reduced sizing if drawdown is recovering
+            if self.portfolio.drawdown_pct < self.config.max_drawdown_pct:
+                recovery_multiplier = 0.25  # Trade at 25% size during recovery
+                logger.debug("trading_recovery_mode", drawdown=self.portfolio.drawdown_pct)
+            else:
+                return False, 0.0, f"Trading halted: {self.halt_reason}"
 
         # 1. Max drawdown check
         if self.portfolio.drawdown_pct >= self.config.max_drawdown_pct:
@@ -75,13 +81,12 @@ class RiskManager:
                 self.trading_halted = True
                 self.halt_reason = f"Max drawdown reached: {self.portfolio.drawdown_pct:.1%}"
                 logger.critical("trading_halted", reason=self.halt_reason)
-                # Signal that all positions should be closed
                 self._liquidation_needed = True
             return False, 0.0, self.halt_reason
 
-        # 2. Daily loss limit
+        # 2. Daily loss limit — reduce sizing instead of hard halt
         if self.daily_pnl <= -self.config.max_daily_loss_usd:
-            return False, 0.0, f"Daily loss limit reached: ${self.daily_pnl:.2f}"
+            recovery_multiplier = min(recovery_multiplier, 0.3)  # Severely reduce sizing
 
         # 3. Check if we already have max positions
         if len(self.portfolio.positions) >= self.trading.max_positions:
@@ -99,6 +104,12 @@ class RiskManager:
 
         if size <= 0:
             return False, 0.0, "Position size too small or no edge"
+
+        # Apply recovery multiplier if in drawdown/daily-loss recovery mode
+        size *= recovery_multiplier
+
+        if size < 0.10:
+            return False, 0.0, "Position size too small after recovery scaling"
 
         # 5. Portfolio exposure check
         if self.portfolio.total_exposure + size > self.trading.max_portfolio_exposure_usd:
