@@ -93,13 +93,17 @@ class MarketMakerStrategy(BaseStrategy):
                 inventory = pos.size
                 # Check inventory limits
                 if abs(inventory * mid) > self.config.max_inventory:
-                    # Only quote on the reducing side
                     if inventory > 0:
-                        # Only ask (sell)
                         ask_price = round_price(mid + half_spread * 0.5)
                         ask_price = clamp(ask_price, 0.02, 0.98)
                         signals.append(self._make_signal(
                             market, token, Side.SELL, ask_price, mid, "reduce_inventory"
+                        ))
+                    elif inventory < 0:
+                        bid_price = round_price(mid - half_spread * 0.5)
+                        bid_price = clamp(bid_price, 0.02, 0.98)
+                        signals.append(self._make_signal(
+                            market, token, Side.BUY, bid_price, mid, "reduce_inventory"
                         ))
                     continue
 

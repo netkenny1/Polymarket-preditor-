@@ -78,7 +78,9 @@ class Market:
 
     @property
     def spread(self) -> float:
-        return abs(1.0 - self.yes_price - self.no_price)
+        """Estimated bid-ask spread proxy from token price overround."""
+        overround = abs(1.0 - self.yes_price - self.no_price)
+        return max(overround, 0.01)  # At least 1 cent spread
 
     @property
     def implied_probability(self) -> float:

@@ -10,8 +10,10 @@ Usage:
 from __future__ import annotations
 
 import asyncio
+import os
 import signal as signal_mod
 import sys
+import time as time_mod
 from datetime import datetime, timezone
 from typing import Any
 
@@ -131,8 +133,17 @@ class AutonomousRunner:
         else:
             self.client = PolymarketClient(self.config.polymarket)
 
-        # Portfolio & risk
-        self.portfolio = Portfolio(initial_cash=self.budget_usd)
+        # Portfolio & risk (try to restore from saved state for live trading)
+        state_file = "portfolio_state.json"
+        if os.path.exists(state_file) and not self.paper:
+            try:
+                self.portfolio = Portfolio.load_state(state_file)
+                logger.info("portfolio_state_loaded", value=self.portfolio.total_value, positions=len(self.portfolio.positions))
+            except Exception as e:
+                logger.error("portfolio_state_load_failed", error=str(e))
+                self.portfolio = Portfolio(initial_cash=self.budget_usd)
+        else:
+            self.portfolio = Portfolio(initial_cash=self.budget_usd)
         sizer = DynamicKellySizer(self.config.trading, self.config.risk)
         self.risk_manager = RiskManager(
             self.config.risk, self.config.trading, self.portfolio, sizer,
@@ -198,8 +209,7 @@ class AutonomousRunner:
         now = datetime.now(timezone.utc)
 
         # 1. Scan/refresh markets periodically
-        import time
-        if time.time() - self._last_scan_time > self.scan_interval_minutes * 60:
+        if time_mod.time() - self._last_scan_time > self.scan_interval_minutes * 60:
             print(f"\n📡 Scanning markets... (cycle #{self._cycle_count})")
             try:
                 all_markets = await self.scanner.scan_all_markets()
@@ -216,7 +226,7 @@ class AutonomousRunner:
                 print(f"   - BTC daily: {len(btc_markets)} | Trump: {len(trump_markets)} | Crypto: {len(crypto_markets)}")
 
                 self.news_reactor.build_keyword_map(self._markets)
-                self._last_scan_time = time.time()
+                self._last_scan_time = time_mod.time()
             except Exception as e:
                 logger.error("scan_failed", error=str(e))
 
@@ -338,6 +348,20 @@ class AutonomousRunner:
                         f"| cost: ${r.net_cost:.2f}"
                     )
 
+        # Circuit breaker: if we've lost more than 5% in the last hour, pause
+        if hasattr(self, '_hourly_pnl_tracker'):
+            self._hourly_pnl_tracker.append((time_mod.time(), self.portfolio.total_pnl))
+            cutoff = time_mod.time() - 3600
+            self._hourly_pnl_tracker = [(t, p) for t, p in self._hourly_pnl_tracker if t > cutoff]
+            if len(self._hourly_pnl_tracker) >= 2:
+                hourly_pnl = self._hourly_pnl_tracker[-1][1] - self._hourly_pnl_tracker[0][1]
+                if hourly_pnl < -(self.budget_usd * 0.05):
+                    logger.warning("circuit_breaker_triggered", hourly_loss=hourly_pnl)
+                    print(f"   ⚡ CIRCUIT BREAKER: Lost ${abs(hourly_pnl):.2f} in last hour. Pausing 15min.")
+                    await asyncio.sleep(900)
+        else:
+            self._hourly_pnl_tracker = [(time_mod.time(), self.portfolio.total_pnl)]
+
         # 10. Check stop losses
         if self.risk_manager.needs_liquidation():
             liq_orders = self.risk_manager.get_liquidation_orders()
@@ -371,6 +395,13 @@ class AutonomousRunner:
                 if len(history) > 200:
                     history = history[-200:]
                 self._context[key] = history
+
+        # 13. Persist portfolio state for crash recovery
+        if not self.paper:
+            try:
+                self.portfolio.save_state()
+            except Exception as e:
+                logger.error("portfolio_state_save_failed", error=str(e))
 
     def _check_daily_reset(self) -> None:
         """Reset daily counters at midnight UTC."""
@@ -431,6 +462,14 @@ class AutonomousRunner:
         """Graceful shutdown."""
         print("\n\n🔴 Shutting down...")
         self._running = False
+
+        if not self.paper and self.client and self.portfolio:
+            try:
+                self.portfolio.save_state()
+                self.client.cancel_all_orders()
+                logger.info("shutdown_orders_cancelled")
+            except Exception as e:
+                logger.error("shutdown_cleanup_failed", error=str(e))
 
         if self.portfolio and self.portfolio.positions:
             print(f"   {len(self.portfolio.positions)} open positions remain.")

@@ -80,7 +80,7 @@ class PositionSizer:
         2. Max single position limit
         3. Max portfolio exposure limit
         4. Per-market position limit
-        5. Confidence scaling
+        5. Confidence discount (never above Kelly)
         """
         if portfolio_value <= 0:
             return 0.0
@@ -92,9 +92,9 @@ class PositionSizer:
         if kelly_size <= 0:
             return 0.0
 
-        # 2. Scale by confidence (moderate scaling — Kelly already accounts for edge)
-        confidence_bonus = 1.0 + (signal.confidence - 0.5) * 0.4
-        confidence_scaled = kelly_size * clamp(confidence_bonus, 0.5, 1.2)
+        # 2. Only penalize low-confidence signals; never inflate beyond Kelly-optimal
+        confidence_discount = min(1.0, signal.confidence / 0.7)
+        final_size = kelly_size * confidence_discount
 
         # 3. Apply hard limits
         max_position = self.trading.max_single_position_usd
@@ -102,14 +102,14 @@ class PositionSizer:
         per_market_limit = portfolio_value * self.risk.position_limit_per_market_pct
 
         size = min(
-            confidence_scaled,
+            final_size,
             max_position,
             remaining_capacity,
             per_market_limit,
         )
 
         # 4. Minimum viable trade (scale with portfolio size)
-        min_trade = max(0.10, portfolio_value * 0.005)  # 0.5% of capital or $0.10
+        min_trade = max(5.0, portfolio_value * 0.01)  # 1% of capital or $5 (live CLOB floor)
         if size < min_trade:
             return 0.0
 

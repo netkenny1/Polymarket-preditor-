@@ -72,18 +72,18 @@ class ArbitrageStrategy(BaseStrategy):
         if len(market.tokens) < 2:
             return []
 
-        # Use best executable prices from order books
+        # Require live order books for every outcome (no token.price fallback).
         outcome_prices: dict[str, float] = {}
+        outcome_depths: dict[str, float] = {}
         token_map: dict[str, Any] = {}
 
         for token in market.tokens:
             book = order_books.get(token.token_id)
-            if book is not None and book.best_ask is not None:
-                outcome_prices[token.outcome] = book.best_ask
-                token_map[token.outcome] = token
-            else:
-                outcome_prices[token.outcome] = token.price
-                token_map[token.outcome] = token
+            if book is None or book.best_ask is None:
+                return []
+            outcome_prices[token.outcome] = book.best_ask
+            outcome_depths[token.outcome] = book.ask_depth
+            token_map[token.outcome] = token
 
         arb = self.odds.find_complement_arb(
             outcome_prices, tolerance=self.config.complement_tolerance
@@ -92,13 +92,27 @@ class ArbitrageStrategy(BaseStrategy):
         if arb is None:
             return []
 
+        min_depth = min(outcome_depths.values())
+        if min_depth < 10.0:
+            return []
+
+        gross_profit_pct = arb["profit_pct"]
+        fee_cost_pct = 0.02 * len(market.tokens)
+        net_profit_pct = gross_profit_pct - fee_cost_pct
+        if net_profit_pct <= 0.005:
+            return []
+
         logger.info(
             "complement_arb_found",
             market=market.condition_id,
             type=arb["type"],
-            profit_pct=arb["profit_pct"],
+            profit_pct=gross_profit_pct,
+            net_profit_pct=net_profit_pct,
+            min_depth=min_depth,
         )
 
+        n_tokens = len(market.tokens)
+        edge_per_leg = net_profit_pct / n_tokens
         signals = []
         if arb["type"] == "underpriced_complement":
             # Buy all outcomes
@@ -111,12 +125,16 @@ class ArbitrageStrategy(BaseStrategy):
                     token_id=token.token_id,
                     side=Side.BUY,
                     outcome=outcome,
-                    estimated_fair_value=1.0 / len(market.tokens),
+                    estimated_fair_value=1.0 / n_tokens,
                     market_price=price,
-                    edge=arb["profit_pct"] / len(market.tokens),
+                    edge=edge_per_leg,
                     confidence=0.95,  # Arb is near-certain
                     strategy=self.name,
-                    metadata={"arb_type": "complement", "total_cost": arb["total_cost"]},
+                    metadata={
+                        "arb_type": "complement",
+                        "total_cost": arb["total_cost"],
+                        "polymarket_depth_shares": min_depth,
+                    },
                 ))
         elif arb["type"] == "overpriced_complement":
             # Sell all outcomes
@@ -129,12 +147,16 @@ class ArbitrageStrategy(BaseStrategy):
                     token_id=token.token_id,
                     side=Side.SELL,
                     outcome=outcome,
-                    estimated_fair_value=1.0 / len(market.tokens),
+                    estimated_fair_value=1.0 / n_tokens,
                     market_price=price,
-                    edge=arb["profit_pct"] / len(market.tokens),
+                    edge=edge_per_leg,
                     confidence=0.95,
                     strategy=self.name,
-                    metadata={"arb_type": "complement", "total_revenue": arb["total_revenue"]},
+                    metadata={
+                        "arb_type": "complement",
+                        "total_revenue": arb["total_revenue"],
+                        "polymarket_depth_shares": min_depth,
+                    },
                 ))
 
         return signals

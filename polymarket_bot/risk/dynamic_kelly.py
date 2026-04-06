@@ -100,12 +100,14 @@ class DynamicKellySizer(PositionSizer):
         # ── Factor 4: Edge accuracy ──────────────────────────────
         # How well did our predicted edges match reality?
         if len(self._recent_edges) >= 10:
-            # If our predicted edges are consistently positive but P&L is negative,
-            # our edge estimation is off -> reduce sizing
-            avg_predicted = np.mean(np.abs(list(self._recent_edges)[-10:]))
-            avg_realized = np.mean(list(self._recent_pnls)[-10:])
+            recent_edges = list(self._recent_edges)[-10:]
+            recent_pnls = list(self._recent_pnls)[-10:]
+            avg_predicted = np.mean(np.abs(recent_edges))
+            avg_realized_pnl = np.mean(recent_pnls)
             if avg_predicted > 0:
-                edge_accuracy = clamp(avg_realized / avg_predicted, 0.3, 1.5)
+                win_rate = np.mean([1.0 if p > 0 else 0.0 for p in recent_pnls])
+                expected_wr = 0.5 + avg_predicted
+                edge_accuracy = clamp(win_rate / max(expected_wr, 0.01), 0.3, 1.5)
             else:
                 edge_accuracy = 1.0
         else:
@@ -146,7 +148,8 @@ class DynamicKellySizer(PositionSizer):
 
         adjusted = min(adjusted, max_position, per_market_limit, remaining)
 
-        if adjusted < 1.0:
+        min_trade = max(0.50, portfolio_value * 0.005)
+        if adjusted < min_trade:
             return 0.0
 
         return round(adjusted, 2)

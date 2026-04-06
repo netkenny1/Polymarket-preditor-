@@ -70,11 +70,11 @@ class ExitManager:
 
     def __init__(
         self,
-        profit_target_1x: float = 0.12,   # Take 50% at 12% profit
-        profit_target_2x: float = 0.25,   # Take rest at 25% profit
-        max_hold_steps: int = 150,         # Close after 150 steps if flat
-        stale_threshold: float = 0.04,     # Close if < 4% move after 50 steps
-        stale_steps: int = 50,
+        profit_target_1x: float = 0.25,   # Take 50% at 25% profit
+        profit_target_2x: float = 0.50,   # Take rest at 50% profit
+        max_hold_steps: int = 250,         # Close after 250 steps if flat
+        stale_threshold: float = 0.06,     # Close if < 6% move after 75 steps
+        stale_steps: int = 75,
         resolution_hours_threshold: float = 4.0,  # Close 4h before resolution
     ) -> None:
         self.profit_target_1x = profit_target_1x

@@ -94,17 +94,35 @@ class StatisticalStrategy(BaseStrategy):
         if best_token is None or abs(best_edge) < self.min_edge:
             return None
 
-        side = Side.BUY if best_edge > 0 else Side.SELL
-        confidence = min(0.9, len(polls) / 20)  # More polls = more confidence
+        # On Polymarket's CLOB, buy the complement token instead of selling
+        if best_edge > 0:
+            side = Side.BUY
+            token = best_token
+            fair_value = best_fair_value
+            market_price = best_token.price
+            edge = abs(best_edge)
+        else:
+            complement = next(
+                (t for t in market.tokens if t.token_id != best_token.token_id), None
+            )
+            if complement is None:
+                return None
+            side = Side.BUY
+            token = complement
+            fair_value = 1.0 - best_fair_value
+            market_price = complement.price
+            edge = abs(best_edge)
+
+        confidence = min(0.9, len(polls) / 20)
 
         return Signal(
             market_condition_id=market.condition_id,
-            token_id=best_token.token_id,
+            token_id=token.token_id,
             side=side,
-            outcome=best_token.outcome,
-            estimated_fair_value=best_fair_value,
-            market_price=best_token.price,
-            edge=abs(best_edge),
+            outcome=token.outcome,
+            estimated_fair_value=fair_value,
+            market_price=market_price,
+            edge=edge,
             confidence=confidence,
             strategy=self.name,
             metadata={"model": "polling_aggregation", "num_polls": len(polls)},
@@ -120,7 +138,6 @@ class StatisticalStrategy(BaseStrategy):
         if len(elo_ratings) < 2:
             return None
 
-        # Get the two teams
         teams = list(elo_ratings.values())[:2]
         probs = self.odds.get_elo_fair_value(teams[0], teams[1])
 
@@ -139,18 +156,34 @@ class StatisticalStrategy(BaseStrategy):
         if best_token is None or abs(best_edge) < self.min_edge:
             return None
 
-        side = Side.BUY if best_edge > 0 else Side.SELL
-        # ELO is well-calibrated, higher base confidence
+        if best_edge > 0:
+            side = Side.BUY
+            token = best_token
+            fair_value = best_fair_value
+            market_price = best_token.price
+            edge = abs(best_edge)
+        else:
+            complement = next(
+                (t for t in market.tokens if t.token_id != best_token.token_id), None
+            )
+            if complement is None:
+                return None
+            side = Side.BUY
+            token = complement
+            fair_value = 1.0 - best_fair_value
+            market_price = complement.price
+            edge = abs(best_edge)
+
         confidence = 0.7
 
         return Signal(
             market_condition_id=market.condition_id,
-            token_id=best_token.token_id,
+            token_id=token.token_id,
             side=side,
-            outcome=best_token.outcome,
-            estimated_fair_value=best_fair_value,
-            market_price=best_token.price,
-            edge=abs(best_edge),
+            outcome=token.outcome,
+            estimated_fair_value=fair_value,
+            market_price=market_price,
+            edge=edge,
             confidence=confidence,
             strategy=self.name,
             metadata={"model": "elo", "ratings": {t.team: t.rating for t in teams}},

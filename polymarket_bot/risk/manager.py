@@ -215,6 +215,26 @@ class RiskManager:
                 })
         return orders
 
+    def reconcile_positions(self, actual_positions: dict[str, float]) -> list[str]:
+        """Compare portfolio positions with actual on-chain positions.
+        Returns list of discrepancy descriptions.
+        """
+        discrepancies = []
+        for token_id, pos in self.portfolio.positions.items():
+            actual_size = actual_positions.get(token_id, 0.0)
+            if abs(pos.size - actual_size) > 0.01:
+                discrepancies.append(
+                    f"Position mismatch: {token_id} bot={pos.size:.2f} actual={actual_size:.2f}"
+                )
+        for token_id, actual_size in actual_positions.items():
+            if token_id not in self.portfolio.positions and actual_size > 0.01:
+                discrepancies.append(
+                    f"Unknown position: {token_id} actual={actual_size:.2f}"
+                )
+        if discrepancies:
+            logger.warning("position_reconciliation_failed", count=len(discrepancies))
+        return discrepancies
+
     def get_risk_summary(self) -> dict[str, Any]:
         """Get a summary of current risk metrics."""
         return {

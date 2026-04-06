@@ -58,7 +58,7 @@ class MicrostructureStrategy(BaseStrategy):
         context: dict[str, Any],
     ) -> list[Signal]:
         signals = []
-        tradeable = self.filter_tradeable_markets(markets)
+        tradeable = self.filter_tradeable_markets(markets, order_books)
 
         for market in tradeable:
             for token in market.tokens:
@@ -183,6 +183,9 @@ class MicrostructureStrategy(BaseStrategy):
                 return None
 
         confidence = min(0.70, abs(score))
+
+        if total_depth < 500.0:
+            confidence *= 0.5
 
         return Signal(
             market_condition_id=market.condition_id,

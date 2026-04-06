@@ -36,6 +36,7 @@ STRATEGY_WEIGHTS: dict[str, float] = {
     "microstructure": 0.9,  # Order book signals (fast-decaying edge)
     "market_maker": 0.4,  # Lower edge per trade — reduced to avoid noise
     "narrative_analysis": 1.15,  # Historical pattern + multi-scenario consensus
+    "latency_arb": 1.4,  # Structural edge — timing advantage over market makers
 }
 
 
@@ -58,9 +59,13 @@ class SignalAggregator:
         if not signals:
             return []
 
-        # Group signals by (token_id, side)
+        directional_signals = [s for s in signals if s.strategy != "market_maker"]
+        mm_signals = [s for s in signals if s.strategy == "market_maker"]
+
+        # Group and combine only directional signals — MM always posts both sides and
+        # would inflate consensus if included in ensembles.
         groups: dict[tuple[str, Side], list[Signal]] = defaultdict(list)
-        for sig in signals:
+        for sig in directional_signals:
             key = (sig.token_id, sig.side)
             groups[key].append(sig)
 
@@ -69,33 +74,24 @@ class SignalAggregator:
         for (token_id, side), group in groups.items():
             if len(group) == 1:
                 sig = group[0]
-                # Apply strategy weight
-                weight = STRATEGY_WEIGHTS.get(sig.strategy, 1.0)
-                sig_copy = Signal(
-                    market_condition_id=sig.market_condition_id,
-                    token_id=sig.token_id,
-                    side=sig.side,
-                    outcome=sig.outcome,
-                    estimated_fair_value=sig.estimated_fair_value,
-                    market_price=sig.market_price,
-                    edge=sig.edge,
-                    confidence=sig.confidence * weight,
-                    strategy=sig.strategy,
-                    metadata=sig.metadata,
-                    timestamp=sig.timestamp,
-                )
-                composites.append(sig_copy)
+                composites.append(sig)
             else:
-                # Multiple strategies agree - combine
                 composite = self._combine_signals(group)
                 if composite is not None:
                     composites.append(composite)
 
-        # Filter by minimum edge
+        # Pass MM through individually (no consensus merge), then resolve conflicts on full set
+        composites.extend(mm_signals)
+        composites = self._resolve_conflicts(composites)
+
         composites = [s for s in composites if s.edge >= self.min_composite_edge]
 
-        # Sort by edge * confidence (expected value)
-        composites.sort(key=lambda s: s.edge * s.confidence, reverse=True)
+        directional_out = [s for s in composites if s.strategy != "market_maker"]
+        mm_out = [s for s in composites if s.strategy == "market_maker"]
+        sort_key = lambda s: s.edge * s.confidence * STRATEGY_WEIGHTS.get(s.strategy, 1.0)
+        directional_out.sort(key=sort_key, reverse=True)
+        mm_out.sort(key=sort_key, reverse=True)
+        composites = directional_out + mm_out
 
         logger.info(
             "signals_aggregated",
@@ -136,6 +132,9 @@ class SignalAggregator:
         combined_confidence = min(1.0, max_confidence + consensus_bonus)
 
         base = signals[0]
+        lead_strategy = max(strategies, key=lambda s: STRATEGY_WEIGHTS.get(s, 1.0))
+        label = f"ensemble:{'+'.join(sorted(set(strategies)))}"
+
         return Signal(
             market_condition_id=base.market_condition_id,
             token_id=base.token_id,
@@ -145,14 +144,40 @@ class SignalAggregator:
             market_price=base.market_price,
             edge=avg_edge,
             confidence=combined_confidence,
-            strategy="ensemble",
+            strategy=label,
             metadata={
                 "strategies": strategies,
+                "lead_strategy": lead_strategy,
                 "consensus_count": len(signals),
                 "individual_edges": [s.edge for s in signals],
             },
             timestamp=base.timestamp,
         )
+
+    def _resolve_conflicts(self, signals: list[Signal]) -> list[Signal]:
+        """Remove conflicting signals on the same market, keeping the stronger one."""
+        by_market: dict[str, list[Signal]] = defaultdict(list)
+        for sig in signals:
+            by_market[sig.market_condition_id].append(sig)
+
+        to_remove: set[int] = set()
+        for market_sigs in by_market.values():
+            outcomes = defaultdict(list)
+            for sig in market_sigs:
+                outcomes[sig.outcome].append(sig)
+
+            if len(outcomes) > 1:
+                ranked = sorted(
+                    market_sigs,
+                    key=lambda s: s.edge * s.confidence * STRATEGY_WEIGHTS.get(s.strategy, 1.0),
+                    reverse=True,
+                )
+                best_outcome = ranked[0].outcome
+                for sig in market_sigs:
+                    if sig.outcome != best_outcome:
+                        to_remove.add(id(sig))
+
+        return [s for s in signals if id(s) not in to_remove]
 
     def check_conflicts(self, signals: list[Signal]) -> list[tuple[Signal, Signal]]:
         """Identify conflicting signals (same market, opposite directions)."""

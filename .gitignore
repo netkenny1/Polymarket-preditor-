@@ -13,3 +13,5 @@ data/*.csv
 logs/
 *.log
 .claude/
+.DS_Store
+.cache/

@@ -77,11 +77,23 @@ class ExecutionEngine:
             )
             return None
 
-        # 2. Calculate shares from dollar amount
+        # 2. Calculate limit price and shares from dollar amount
         price = self._optimize_price(signal)
         shares = round(size_usd / price, 2) if price > 0 else 0
 
         if shares <= 0:
+            return None
+
+        meta = signal.metadata or {}
+        depth_shares = meta.get("polymarket_depth_shares")
+        if depth_shares is not None and shares > float(depth_shares):
+            logger.info(
+                "signal_rejected_insufficient_depth",
+                market=signal.market_condition_id,
+                shares=shares,
+                available_depth=float(depth_shares),
+                limit_price=price,
+            )
             return None
 
         # 3. Place order
@@ -108,14 +120,12 @@ class ExecutionEngine:
 
         # 4. Update portfolio on fill
         if result.success:
-            self.portfolio.process_fill(result)
-            # Only count realized P&L toward daily loss (not buy costs which are investments)
             if signal.side == Side.SELL:
-                # Estimate realized P&L from the sell
                 pos = self.portfolio.positions.get(signal.token_id)
                 if pos:
-                    realized = (result.fill_price - pos.avg_entry_price) * result.fill_size
+                    realized = (result.fill_price - pos.avg_entry_price) * result.fill_size - result.fees
                     self.risk.update_daily_pnl(realized)
+            self.portfolio.process_fill(result)
             logger.info(
                 "trade_executed",
                 order_id=result.order.order_id,
@@ -166,21 +176,29 @@ class ExecutionEngine:
         return results
 
     def _optimize_price(self, signal: Signal) -> float:
-        """Determine optimal limit order price.
+        """Determine optimal limit order price aligned with Polymarket's cent grid."""
+        spread = signal.metadata.get("polymarket_spread", 0.02) if signal.metadata else 0.02
+        strategy = signal.strategy or ""
+        is_urgent = (
+            "arbitrage" in strategy
+            or "stop_loss" in strategy
+            or (signal.metadata and signal.metadata.get("urgent"))
+        )
 
-        Places limit orders slightly better than the signal's market price
-        to improve fill quality while ensuring execution.
-        """
-        if signal.side == Side.BUY:
-            # Place bid slightly below market for better fill
-            # But not too far to ensure execution
-            price = signal.market_price - 0.005
+        if is_urgent:
+            # Cross the spread for guaranteed fill on time-sensitive signals
+            if signal.side == Side.BUY:
+                price = signal.market_price + 0.01
+            else:
+                price = signal.market_price - 0.01
         else:
-            # Place ask slightly above market
-            price = signal.market_price + 0.005
+            improvement = max(0.01, min(0.02, spread * 0.3))
+            if signal.side == Side.BUY:
+                price = signal.market_price - improvement
+            else:
+                price = signal.market_price + improvement
 
         price = round_price(price)
-        # Ensure valid price range
         return max(0.01, min(0.99, price))
 
     def cancel_all(self) -> bool:

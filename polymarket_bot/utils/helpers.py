@@ -65,7 +65,11 @@ def time_to_expiry_hours(end_date: datetime | None) -> float:
     """Calculate hours until market expiry."""
     if end_date is None:
         return float("inf")
-    delta = end_date - datetime.utcnow()
+    from datetime import timezone
+    now = datetime.now(timezone.utc)
+    if end_date.tzinfo is None:
+        end_date = end_date.replace(tzinfo=timezone.utc)
+    delta = end_date - now
     return max(0.0, delta.total_seconds() / 3600)
 
 

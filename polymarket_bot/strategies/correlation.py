@@ -19,6 +19,7 @@ relationships. The edge comes from the market B's slow adjustment.
 
 from __future__ import annotations
 
+import time
 from collections import defaultdict
 from typing import Any
 
@@ -48,8 +49,8 @@ class CorrelationStrategy(BaseStrategy):
         self.min_history = min_history
         self.lag_threshold = lag_threshold
         self.min_edge = min_edge
-        # Cache of detected correlations
-        self._correlation_cache: dict[tuple[str, str], float] = {}
+        self._correlation_cache: dict[tuple[str, str], dict[str, Any]] = {}
+        self._cache_time: float = 0.0
 
     def generate_signals(
         self,
@@ -58,7 +59,7 @@ class CorrelationStrategy(BaseStrategy):
         context: dict[str, Any],
     ) -> list[Signal]:
         signals = []
-        tradeable = self.filter_tradeable_markets(markets)
+        tradeable = self.filter_tradeable_markets(markets, order_books)
 
         if len(tradeable) < 2:
             return signals
@@ -95,6 +96,9 @@ class CorrelationStrategy(BaseStrategy):
         self, histories: dict[str, list[float]]
     ) -> dict[tuple[str, str], dict[str, Any]]:
         """Find market pairs with significant correlation."""
+        if self._correlation_cache and time.monotonic() - self._cache_time < 300:
+            return self._correlation_cache
+
         pairs: dict[tuple[str, str], dict[str, Any]] = {}
         ids = list(histories.keys())
 
@@ -144,6 +148,8 @@ class CorrelationStrategy(BaseStrategy):
                         "direction": "positive" if lag_corr > 0 else "negative",
                     }
 
+        self._correlation_cache = pairs
+        self._cache_time = time.monotonic()
         return pairs
 
     def _generate_lag_signal(

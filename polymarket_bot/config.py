@@ -108,6 +108,24 @@ class NarrativeConfig:
     council_size: int = 5
 
 
+@dataclass(frozen=True)
+class LatencyArbitrageConfig:
+    """Binance→Polymarket latency arbitrage parameters."""
+    binance_ws_url: str = "wss://stream.binance.com:9443/ws"
+    binance_stream: str = "btcusdt@aggTrade"
+    move_threshold_pct: float = 0.15
+    move_window_seconds: float = 5.0
+    cooldown_seconds: float = 10.0
+    max_staleness_seconds: float = 5.0
+    min_edge_cents: float = 0.02
+    min_polymarket_liquidity: float = 500.0
+    max_position_usd: float = 25.0
+    price_aggression: float = 0.005
+    max_daily_trades: int = 50
+    max_daily_loss_usd: float = 50.0
+    max_concurrent_positions: int = 5
+
+
 @dataclass
 class BotConfig:
     """Master configuration aggregating all sub-configs."""
@@ -120,6 +138,7 @@ class BotConfig:
     arbitrage: ArbitrageConfig = field(default_factory=ArbitrageConfig)
     risk: RiskConfig = field(default_factory=RiskConfig)
     narrative: NarrativeConfig = field(default_factory=NarrativeConfig)
+    latency_arb: LatencyArbitrageConfig = field(default_factory=LatencyArbitrageConfig)
 
     @classmethod
     def from_env(cls) -> BotConfig:
@@ -135,14 +154,57 @@ class BotConfig:
                 bearer_token=os.getenv("TWITTER_BEARER_TOKEN", ""),
             ),
             trading=TradingConfig(
-                paper_trading=os.getenv("PAPER_TRADING", "true").lower() == "true",
+                paper_trading=os.getenv(
+                    "PAPER_TRADING", str(TradingConfig.paper_trading)
+                ).lower()
+                == "true",
                 max_portfolio_exposure_usd=float(
-                    os.getenv("MAX_PORTFOLIO_EXPOSURE_USD", "1000")
+                    os.getenv(
+                        "MAX_PORTFOLIO_EXPOSURE_USD",
+                        str(TradingConfig.max_portfolio_exposure_usd),
+                    )
                 ),
                 max_single_position_usd=float(
-                    os.getenv("MAX_SINGLE_POSITION_USD", "100")
+                    os.getenv(
+                        "MAX_SINGLE_POSITION_USD",
+                        str(TradingConfig.max_single_position_usd),
+                    )
                 ),
-                min_edge_threshold=float(os.getenv("MIN_EDGE_THRESHOLD", "0.05")),
-                kelly_fraction=float(os.getenv("KELLY_FRACTION", "0.25")),
+                min_edge_threshold=float(
+                    os.getenv(
+                        "MIN_EDGE_THRESHOLD", str(TradingConfig.min_edge_threshold)
+                    )
+                ),
+                kelly_fraction=float(
+                    os.getenv("KELLY_FRACTION", str(TradingConfig.kelly_fraction))
+                ),
+                max_positions=int(
+                    os.getenv("MAX_POSITIONS", str(TradingConfig.max_positions))
+                ),
+                min_liquidity_usd=float(
+                    os.getenv(
+                        "MIN_LIQUIDITY_USD", str(TradingConfig.min_liquidity_usd)
+                    )
+                ),
+                max_spread=float(os.getenv("MAX_SPREAD", str(TradingConfig.max_spread))),
+            ),
+            risk=RiskConfig(
+                stop_loss_pct=float(
+                    os.getenv("STOP_LOSS_PCT", str(RiskConfig.stop_loss_pct))
+                ),
+                trailing_stop_pct=float(
+                    os.getenv("TRAILING_STOP_PCT", str(RiskConfig.trailing_stop_pct))
+                ),
+                max_daily_loss_usd=float(
+                    os.getenv(
+                        "MAX_DAILY_LOSS_USD", str(RiskConfig.max_daily_loss_usd)
+                    )
+                ),
+                position_limit_per_market_pct=float(
+                    os.getenv(
+                        "POSITION_LIMIT_PER_MARKET_PCT",
+                        str(RiskConfig.position_limit_per_market_pct),
+                    )
+                ),
             ),
         )

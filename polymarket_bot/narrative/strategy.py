@@ -186,6 +186,15 @@ class NarrativeStrategy(BaseStrategy):
         if economic_data:
             self._engine.ingest_economic_data(economic_data)
 
+        # Country profiles (macro / geopolitical context)
+        country_profiles = context.get("country_profiles", [])
+        if country_profiles:
+            self._engine.ingest_geopolitical_context(country_profiles)
+
+        geopolitical_tensions = context.get("geopolitical_tensions", [])
+        if geopolitical_tensions:
+            self._engine.ingest_geopolitical_tensions(geopolitical_tensions)
+
         # Market moves
         self._engine.ingest_market_moves(markets, context)
 

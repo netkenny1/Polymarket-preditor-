@@ -1,7 +1,7 @@
 """Built-in historical pattern library for predictive history matching.
 
-Contains ~10 hardcoded patterns derived from major market-moving episodes
-(2016-2024).  Each pattern is broken into 3-5 phases with realistic
+Contains ~15 hardcoded patterns derived from major market-moving episodes
+(2016-2026).  Each pattern is broken into 3-5 phases with realistic
 durations, keyword sets, and directional market-impact estimates.
 """
 
@@ -605,6 +605,315 @@ def get_builtin_patterns() -> list[HistoricalPattern]:
             ],
             similarity_threshold=0.4,
             source_period="2023-10 to 2024-03",
+        )
+    )
+
+    # ------------------------------------------------------------------ 11
+    patterns.append(
+        HistoricalPattern(
+            pattern_id="hist_trump_tariff_shock_2026",
+            name="2025-2026 Trump Tariff Shock",
+            category=NarrativeCategory.TRADE_WAR,
+            description=(
+                "Trump's 'Liberation Day' tariffs (April 2025) trigger "
+                "global retaliation, supply chain chaos, and stagflationary "
+                "pressure across trade-linked assets."
+            ),
+            trigger_keywords=[
+                "tariff", "liberation day", "retaliation", "trade war",
+                "import duties", "supply chain", "stagflation",
+            ],
+            timeline_days=450,
+            market_impact={"politics": -0.3, "crypto": -0.2, "other": -0.4},
+            outcome_direction=-0.3,
+            outcome_magnitude=0.16,
+            phases=[
+                _p(
+                    "Initial Shock",
+                    "Sweeping tariff announcements hit expectations; equities and "
+                    "trade-sensitive sectors reprice sharply.",
+                    30,
+                    {"politics": -0.35, "crypto": -0.2, "other": -0.35},
+                    ["tariff", "liberation day", "announcement", "duties"],
+                    0,
+                ),
+                _p(
+                    "Retaliation Wave",
+                    "Major trading partners impose counter-tariffs; diplomatic "
+                    "rhetoric hardens and uncertainty spikes.",
+                    90,
+                    {"politics": -0.4, "crypto": -0.25, "other": -0.45},
+                    ["retaliation", "counter-tariff", "trade partner", "escalation"],
+                    1,
+                ),
+                _p(
+                    "Supply Chain Disruption",
+                    "Rerouting, inventory builds, and input-cost shocks ripple "
+                    "through manufacturing and logistics.",
+                    150,
+                    {"politics": -0.25, "crypto": -0.15, "other": -0.45},
+                    ["supply chain", "logistics", "inventory", "manufacturing"],
+                    2,
+                ),
+                _p(
+                    "Stagflationary Pressure",
+                    "Slower growth meets sticky inflation; markets discount "
+                    "persistent policy and pricing friction.",
+                    180,
+                    {"politics": -0.3, "crypto": -0.2, "other": -0.4},
+                    ["stagflation", "inflation", "slowdown", "pricing"],
+                    3,
+                ),
+            ],
+            similarity_threshold=0.4,
+            source_period="2025-04 to 2026-04",
+        )
+    )
+
+    # ------------------------------------------------------------------ 12
+    patterns.append(
+        HistoricalPattern(
+            pattern_id="hist_petrodollar_collapse_2026",
+            name="2025-2026 Petrodollar Collapse",
+            category=NarrativeCategory.MARKET_CRISIS,
+            description=(
+                "Saudi Arabia and allies accept yuan and non-dollar settlement; "
+                "BRICS currency talks accelerate; USD reserve status erodes "
+                "and bond markets come under stress."
+            ),
+            trigger_keywords=[
+                "petrodollar", "brics", "dollar", "reserve currency", "yuan",
+                "saudi", "dedollarization",
+            ],
+            timeline_days=540,
+            market_impact={"politics": -0.2, "crypto": 0.3, "other": -0.5},
+            outcome_direction=-0.15,
+            outcome_magnitude=0.18,
+            phases=[
+                _p(
+                    "De-dollarization Signals",
+                    "Oil and trade invoicing shift toward non-dollar currencies; "
+                    "policy elites debate reserve diversification.",
+                    120,
+                    {"politics": -0.15, "crypto": 0.15, "other": -0.35},
+                    ["dedollarization", "invoicing", "settlement", "reserve"],
+                    0,
+                ),
+                _p(
+                    "BRICS Currency Push",
+                    "Summits and working groups float alternative payment rails "
+                    "and basket-currency ideas.",
+                    150,
+                    {"politics": -0.2, "crypto": 0.25, "other": -0.45},
+                    ["brics", "payment rail", "basket currency", "summit"],
+                    1,
+                ),
+                _p(
+                    "USD Weakness Cascade",
+                    "Dollar selling, widening credit spreads, and Treasury "
+                    "volatility as foreign demand for US paper wavers.",
+                    150,
+                    {"politics": -0.25, "crypto": 0.35, "other": -0.55},
+                    ["dollar", "treasury", "spread", "volatility", "fx"],
+                    2,
+                ),
+                _p(
+                    "New Order Emergence",
+                    "Markets price a multipolar monetary system; winners and "
+                    "losers in funding markets become clearer.",
+                    120,
+                    {"politics": -0.15, "crypto": 0.4, "other": -0.4},
+                    ["multipolar", "new order", "funding", "allocation"],
+                    3,
+                ),
+            ],
+            similarity_threshold=0.4,
+            source_period="2025-01 to 2026-04",
+        )
+    )
+
+    # ------------------------------------------------------------------ 13
+    patterns.append(
+        HistoricalPattern(
+            pattern_id="hist_middle_east_escalation_2026",
+            name="2025-2026 Middle East Escalation",
+            category=NarrativeCategory.GEOPOLITICAL,
+            description=(
+                "Iran-Israel tensions widen into proxy fights (Yemen Houthis, "
+                "Hezbollah), risking oil supply disruption and a global "
+                "energy-price shock."
+            ),
+            trigger_keywords=[
+                "iran", "israel", "middle east", "houthi", "hezbollah", "oil",
+                "strait of hormuz", "yemen",
+            ],
+            timeline_days=420,
+            market_impact={"politics": -0.3, "crypto": 0.0, "other": -0.35},
+            outcome_direction=-0.28,
+            outcome_magnitude=0.17,
+            phases=[
+                _p(
+                    "Proxy Escalation",
+                    "Missile and drone exchanges intensify via proxies; "
+                    "shipping premiums and insurance costs rise.",
+                    90,
+                    {"politics": -0.25, "crypto": -0.1, "other": -0.3},
+                    ["houthi", "hezbollah", "proxy", "drone", "missile"],
+                    0,
+                ),
+                _p(
+                    "Direct Confrontation",
+                    "Risk of direct Iran-Israel engagement dominates headlines; "
+                    "safe-haven flows compete with deleveraging.",
+                    60,
+                    {"politics": -0.4, "crypto": 0.1, "other": -0.4},
+                    ["iran", "israel", "confrontation", "strike", "military"],
+                    1,
+                ),
+                _p(
+                    "Oil Supply Shock",
+                    "Strait of Hormuz fears and outages drive crude sharply "
+                    "higher; stagflation fears spread.",
+                    120,
+                    {"politics": -0.35, "crypto": -0.05, "other": -0.5},
+                    ["oil", "strait of hormuz", "opec", "crude", "energy"],
+                    2,
+                ),
+                _p(
+                    "Diplomatic Scramble",
+                    "Ceasefire talks, sanctions tweaks, and emergency releases "
+                    "modulate but do not erase the risk premium.",
+                    150,
+                    {"politics": -0.15, "crypto": 0.05, "other": -0.2},
+                    ["diplomacy", "ceasefire", "sanctions", "talks", "release"],
+                    3,
+                ),
+            ],
+            similarity_threshold=0.4,
+            source_period="2025-06 to 2026-04",
+        )
+    )
+
+    # ------------------------------------------------------------------ 14
+    patterns.append(
+        HistoricalPattern(
+            pattern_id="hist_global_recession_2026",
+            name="2025-2026 Global Recession",
+            category=NarrativeCategory.MARKET_CRISIS,
+            description=(
+                "Trade-war drag, rate uncertainty, and geopolitical risk "
+                "compound into a consumer slowdown, earnings compression, "
+                "and rising credit stress."
+            ),
+            trigger_keywords=[
+                "recession", "slowdown", "layoffs", "earnings", "gdp",
+                "unemployment", "consumer",
+            ],
+            timeline_days=600,
+            market_impact={"politics": -0.35, "crypto": -0.35, "other": -0.4},
+            outcome_direction=-0.35,
+            outcome_magnitude=0.18,
+            phases=[
+                _p(
+                    "Leading Indicators Turn",
+                    "PMIs, freight indices, and credit impulse roll over; "
+                    "markets debate hard vs. soft landing.",
+                    120,
+                    {"politics": -0.2, "crypto": -0.25, "other": -0.3},
+                    ["pmi", "leading indicator", "freight", "credit impulse"],
+                    0,
+                ),
+                _p(
+                    "Consumer Slowdown",
+                    "Real spending weakens; retail misses and delinquencies tick up.",
+                    150,
+                    {"politics": -0.3, "crypto": -0.3, "other": -0.35},
+                    ["consumer", "retail", "spending", "delinquency"],
+                    1,
+                ),
+                _p(
+                    "Corporate Stress",
+                    "Earnings revisions deepen; layoffs and guidance cuts "
+                    "spread beyond cyclical sectors.",
+                    180,
+                    {"politics": -0.4, "crypto": -0.4, "other": -0.45},
+                    ["earnings", "layoffs", "guidance", "revisions"],
+                    2,
+                ),
+                _p(
+                    "Policy Response",
+                    "Fiscal and monetary easing arrive but lag the damage; "
+                    "risk assets only partially stabilize.",
+                    150,
+                    {"politics": -0.25, "crypto": -0.3, "other": -0.35},
+                    ["fed", "rate cut", "stimulus", "fiscal", "easing"],
+                    3,
+                ),
+            ],
+            similarity_threshold=0.4,
+            source_period="2025-01 to 2026-04",
+        )
+    )
+
+    # ------------------------------------------------------------------ 15
+    patterns.append(
+        HistoricalPattern(
+            pattern_id="hist_crypto_regime_shift_2026",
+            name="2025-2026 Crypto Regime Shift",
+            category=NarrativeCategory.CRYPTO_REGULATION,
+            description=(
+                "DeFi enforcement and stablecoin rules tighten, then spot "
+                "ETF and institutional pipelines mature; Bitcoin's "
+                "'digital gold' narrative strengthens amid macro chaos."
+            ),
+            trigger_keywords=[
+                "crypto regulation", "stablecoin", "etf", "digital gold",
+                "defi", "institutional",
+            ],
+            timeline_days=365,
+            market_impact={"politics": 0.0, "crypto": 0.15, "other": -0.05},
+            outcome_direction=0.25,
+            outcome_magnitude=0.16,
+            phases=[
+                _p(
+                    "Regulatory Crackdown",
+                    "Agencies target DeFi venues and stablecoin issuers; "
+                    "compliance costs and delisting fears weigh on altcoins.",
+                    90,
+                    {"politics": -0.05, "crypto": -0.3, "other": -0.05},
+                    ["defi", "stablecoin", "enforcement", "compliance", "sec"],
+                    0,
+                ),
+                _p(
+                    "Institutional Entry",
+                    "ETF flows, custody upgrades, and corporate treasuries "
+                    "normalize large-size BTC allocation.",
+                    120,
+                    {"politics": 0.05, "crypto": 0.2, "other": 0.0},
+                    ["etf", "institutional", "custody", "treasury", "inflows"],
+                    1,
+                ),
+                _p(
+                    "Safe Haven Narrative",
+                    "Macro shocks drive narrative demand for scarce digital "
+                    "assets alongside traditional hedges.",
+                    90,
+                    {"politics": 0.0, "crypto": 0.35, "other": -0.1},
+                    ["digital gold", "safe haven", "macro", "hedge", "btc"],
+                    2,
+                ),
+                _p(
+                    "New Equilibrium",
+                    "Liquidity, basis trades, and regulated products define "
+                    "a higher structural crypto beta to policy cycles.",
+                    65,
+                    {"politics": 0.05, "crypto": 0.4, "other": 0.0},
+                    ["equilibrium", "liquidity", "regulated", "basis", "adoption"],
+                    3,
+                ),
+            ],
+            similarity_threshold=0.4,
+            source_period="2025-01 to 2026-04",
         )
     )
 

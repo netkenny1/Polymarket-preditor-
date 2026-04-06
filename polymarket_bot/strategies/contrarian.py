@@ -57,21 +57,32 @@ class ContrarianStrategy(BaseStrategy):
         context: dict[str, Any],
     ) -> list[Signal]:
         signals = []
-        tradeable = self.filter_tradeable_markets(markets)
+        tradeable = self.filter_tradeable_markets(markets, order_books)
 
         for market in tradeable:
             price_history = context.get(f"price_history_{market.condition_id}", [])
             if len(price_history) < self.lookback + 1:
                 continue
 
-            # Skip only very strong trends (allow contrarian in weak trends)
             regime = context.get(f"regime_{market.condition_id}", "unknown")
+
+            # Skip strong directional trends unless z-score is extreme
+            if regime in ("trending_up", "trending_down"):
+                arr_tmp = np.array(price_history)
+                lookback_tmp = arr_tmp[-(self.lookback + 1):-1]
+                std_tmp = np.std(lookback_tmp, ddof=1)
+                if std_tmp > 0.01:
+                    z_tmp = abs((arr_tmp[-1] - np.mean(lookback_tmp)) / std_tmp)
+                    if z_tmp < 2.0:
+                        continue  # Only trade extreme z-scores in trends
+                else:
+                    continue
+
             if regime == "trending":
-                # Check if trend is strong via price history slope
-                ph = context.get(f"price_history_{market.condition_id}", [])
+                ph = price_history
                 if len(ph) >= 10:
                     slope = abs(ph[-1] - ph[-10]) / 10
-                    if slope > 0.01:  # Strong trend — skip
+                    if slope > 0.01:
                         continue
 
             try:
@@ -92,6 +103,13 @@ class ContrarianStrategy(BaseStrategy):
     ) -> Signal | None:
         arr = np.array(price_history)
         current = arr[-1]
+
+        # Prefer order book mid_price for fresher data
+        yes_token = next((t for t in market.tokens if t.outcome == "Yes"), None)
+        if yes_token:
+            book = order_books.get(yes_token.token_id)
+            if book and book.mid_price is not None:
+                current = book.mid_price
 
         # ── Z-score calculation ──────────────────────────────────
         lookback_data = arr[-(self.lookback + 1):-1]  # Exclude current

@@ -40,17 +40,24 @@ class BaseStrategy(ABC):
     def filter_tradeable_markets(
         self,
         markets: list[Market],
+        order_books: dict[str, OrderBook] | None = None,
         min_liquidity: float = 500.0,
         max_spread: float = 0.10,
     ) -> list[Market]:
-        """Filter markets that meet minimum trading criteria."""
+        """Filter for actively tradeable markets."""
         tradeable = []
         for m in markets:
             if not m.active:
                 continue
             if m.liquidity < min_liquidity:
                 continue
-            if m.spread > max_spread:
+            if order_books:
+                yes_token = next((t for t in m.tokens if t.outcome == "Yes"), None)
+                if yes_token:
+                    book = order_books.get(yes_token.token_id)
+                    if book and book.spread is not None and book.spread > max_spread:
+                        continue
+            elif m.spread > max_spread:
                 continue
             tradeable.append(m)
         return tradeable

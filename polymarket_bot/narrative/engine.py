@@ -30,16 +30,19 @@ _CATEGORY_KEYWORDS: dict[NarrativeCategory, list[str]] = {
         "tariff", "trade war", "import", "export", "duties", "customs",
         "sanctions", "trade deficit", "trade surplus", "protectionism",
         "retaliatory", "dumping", "quota", "embargo",
+        "liberation day", "reciprocal", "decoupling", "reshoring",
     ],
     NarrativeCategory.MONETARY_POLICY: [
         "fed", "federal reserve", "interest rate", "rate cut", "rate hike",
         "inflation", "cpi", "ppi", "fomc", "powell", "monetary",
         "quantitative", "tightening", "easing", "dovish", "hawkish",
+        "stagflation", "recession", "yield curve", "credit spread",
     ],
     NarrativeCategory.GEOPOLITICAL: [
         "war", "military", "troops", "conflict", "invasion", "nato",
         "un", "security council", "missile", "nuclear", "diplomacy",
         "ceasefire", "peace talks", "tensions",
+        "iran", "israel", "houthi", "hezbollah", "strait of hormuz", "proxy war",
     ],
     NarrativeCategory.CRYPTO_REGULATION: [
         "crypto", "bitcoin", "sec", "regulation", "ban", "cbdc",
@@ -60,6 +63,8 @@ _CATEGORY_KEYWORDS: dict[NarrativeCategory, list[str]] = {
         "crash", "crisis", "panic", "bank failure", "contagion",
         "liquidity", "margin call", "selloff", "black swan",
         "circuit breaker", "flash crash", "collapse",
+        "petrodollar", "dedollarization", "brics", "reserve currency",
+        "stagflation", "debt spiral",
     ],
 }
 
@@ -208,6 +213,179 @@ class NarrativeEngine:
                 keywords=self._extract_keywords(market.question),
             )
             self._event_buffer.append(ne)
+
+    def ingest_geopolitical_context(self, country_data: list[dict]) -> None:
+        """Ingest narrative events from country profile dicts (e.g. CountryProfileManager).
+
+        Expects keys such as: name/country/code, status, key_risks, currency_strength,
+        alignment / is_brics, usd_negative_news / usd_news_sentiment.
+        """
+        ts = datetime.now(timezone.utc)
+        for country in country_data:
+            if not isinstance(country, dict):
+                continue
+
+            name = (
+                country.get("name")
+                or country.get("country")
+                or country.get("code")
+                or "Unknown"
+            )
+            name_s = str(name)
+            status = str(country.get("status", "")).lower()
+
+            if status in ("crisis", "recession"):
+                content = (
+                    f"{name_s}: economic profile status '{status}' — "
+                    "elevated macro stress and bearish tail risks"
+                )
+                self._event_buffer.append(
+                    NarrativeEvent(
+                        event_id=str(uuid.uuid4())[:12],
+                        source="country_profile",
+                        content=content,
+                        timestamp=ts,
+                        category=NarrativeCategory.MARKET_CRISIS,
+                        sentiment=-0.55,
+                        magnitude=0.65,
+                        keywords=self._extract_keywords(content)
+                        + [name_s.lower(), status],
+                        metadata=country,
+                    )
+                )
+
+            key_risks = country.get("key_risks", [])
+            if isinstance(key_risks, str):
+                key_risks = [key_risks]
+            risks_blob = " ".join(str(r).lower() for r in key_risks)
+            if any(k in risks_blob for k in ("war", "conflict", "invasion")):
+                content = (
+                    f"{name_s}: country risk profile flags conflict-related "
+                    "exposure (war / conflict / invasion themes)"
+                )
+                self._event_buffer.append(
+                    NarrativeEvent(
+                        event_id=str(uuid.uuid4())[:12],
+                        source="country_profile",
+                        content=content,
+                        timestamp=ts,
+                        category=NarrativeCategory.GEOPOLITICAL,
+                        sentiment=-0.5,
+                        magnitude=0.7,
+                        keywords=self._extract_keywords(content)
+                        + [name_s.lower(), "geopolitical"],
+                        metadata=country,
+                    )
+                )
+
+            raw_cs = country.get("currency_strength")
+            if raw_cs is not None:
+                try:
+                    currency_strength = float(raw_cs)
+                except (TypeError, ValueError):
+                    currency_strength = None
+                if currency_strength is not None and currency_strength < -0.3:
+                    content = (
+                        f"{name_s}: currency weakness signal "
+                        f"(strength index {currency_strength:.2f})"
+                    )
+                    self._event_buffer.append(
+                        NarrativeEvent(
+                            event_id=str(uuid.uuid4())[:12],
+                            source="country_profile",
+                            content=content,
+                            timestamp=ts,
+                            category=NarrativeCategory.MARKET_CRISIS,
+                            sentiment=-0.45,
+                            magnitude=min(
+                                0.45 + abs(currency_strength) * 0.4, 1.0
+                            ),
+                            keywords=self._extract_keywords(content)
+                            + [name_s.lower(), "currency"],
+                            metadata=country,
+                        )
+                    )
+
+            alignment = str(country.get("alignment", "")).lower()
+            is_brics = "brics" in alignment or bool(country.get("is_brics"))
+            usd_negative = bool(country.get("usd_negative_news"))
+            if not usd_negative:
+                usd_sent = country.get("usd_news_sentiment")
+                if usd_sent is not None:
+                    try:
+                        usd_negative = float(usd_sent) < 0
+                    except (TypeError, ValueError):
+                        pass
+            if is_brics and usd_negative:
+                content = (
+                    f"{name_s}: BRICS-aligned context with USD-negative news flow — "
+                    "dedollarization / reserve-currency narrative pressure"
+                )
+                self._event_buffer.append(
+                    NarrativeEvent(
+                        event_id=str(uuid.uuid4())[:12],
+                        source="country_profile",
+                        content=content,
+                        timestamp=ts,
+                        category=NarrativeCategory.MARKET_CRISIS,
+                        sentiment=-0.4,
+                        magnitude=0.55,
+                        keywords=self._extract_keywords(content)
+                        + [
+                            name_s.lower(),
+                            "dedollarization",
+                            "brics",
+                            "reserve currency",
+                        ],
+                        metadata=country,
+                    )
+                )
+
+    def ingest_geopolitical_tensions(self, tensions: list[dict]) -> None:
+        """Buffer narrative events from structured geopolitical tension records."""
+        ts = datetime.now(timezone.utc)
+        for row in tensions:
+            if not isinstance(row, dict):
+                continue
+            label = (
+                row.get("title")
+                or row.get("name")
+                or row.get("region")
+                or "Geopolitical tension"
+            )
+            desc = row.get("description") or row.get("summary") or ""
+            label_s, desc_s = str(label), str(desc)
+            content = f"{label_s}: {desc_s}".strip().strip(":")
+            if len(content) < 8:
+                content = f"Elevated geopolitical tension — {label_s}"
+
+            raw_sev = row.get("severity", row.get("intensity", 0.6))
+            try:
+                magnitude = min(max(float(raw_sev), 0.1), 1.0)
+            except (TypeError, ValueError):
+                magnitude = 0.55
+
+            raw_sent = row.get("sentiment", -0.5)
+            try:
+                sentiment = float(raw_sent)
+            except (TypeError, ValueError):
+                sentiment = -0.5
+            sentiment = max(-1.0, min(1.0, sentiment))
+
+            self._event_buffer.append(
+                NarrativeEvent(
+                    event_id=str(uuid.uuid4())[:12],
+                    source="geopolitical_tension",
+                    content=content[:500],
+                    timestamp=ts,
+                    category=NarrativeCategory.GEOPOLITICAL,
+                    sentiment=sentiment,
+                    magnitude=magnitude,
+                    keywords=self._extract_keywords(content)
+                    + self._extract_keywords(label_s),
+                    metadata=row,
+                )
+            )
 
     def update_narratives(self) -> list[Narrative]:
         """Process buffered events, update existing or create new narratives.

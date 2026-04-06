@@ -331,10 +331,36 @@ def run_backtest(initial_capital: float = 1000.0, time_steps: int = 200, num_mar
     print(result.summary())
 
 
+def run_latency_arb() -> None:
+    """Run the Binance→Polymarket latency arbitrage strategy."""
+    import asyncio
+    from polymarket_bot.strategies.latency_arb_runner import LatencyArbitrageRunner
+
+    config = BotConfig.from_env()
+
+    if config.trading.paper_trading:
+        poly_client = PaperTradingClient(config.polymarket)
+    else:
+        poly_client = PolymarketClient(config.polymarket)
+
+    runner = LatencyArbitrageRunner(
+        config=config.latency_arb,
+        polymarket_client=poly_client,
+    )
+
+    logger.info("starting_latency_arb", paper=config.trading.paper_trading)
+
+    try:
+        asyncio.run(runner.run())
+    except KeyboardInterrupt:
+        logger.info("latency_arb_stopped")
+
+
 def main() -> None:
     """CLI entry point."""
     parser = argparse.ArgumentParser(description="Polymarket Trading Bot")
     parser.add_argument("--backtest", action="store_true", help="Run backtester instead of live bot")
+    parser.add_argument("--latency-arb", action="store_true", help="Run Binance→Polymarket latency arb")
     parser.add_argument("--capital", type=float, default=1000.0, help="Initial capital (USD)")
     parser.add_argument("--steps", type=int, default=200, help="Backtest time steps")
     parser.add_argument("--markets", type=int, default=10, help="Number of simulated markets")
@@ -350,6 +376,8 @@ def main() -> None:
             time_steps=args.steps,
             num_markets=args.markets,
         )
+    elif args.latency_arb:
+        run_latency_arb()
     else:
         bot = TradingBot()
         bot.run()

@@ -58,7 +58,7 @@ class MomentumStrategy(BaseStrategy):
         context: dict[str, Any],
     ) -> list[Signal]:
         signals = []
-        tradeable = self.filter_tradeable_markets(markets)
+        tradeable = self.filter_tradeable_markets(markets, order_books)
 
         for market in tradeable:
             price_history = context.get(f"price_history_{market.condition_id}", [])
@@ -90,6 +90,9 @@ class MomentumStrategy(BaseStrategy):
         # Use available history for long MA (may be shorter than window)
         long_len = min(self.long_window, len(arr))
         long_ma = np.mean(arr[-long_len:])
+
+        if long_len < self.long_window * 0.7:
+            return None  # Not enough history for reliable long MA
 
         # Rate of change (normalized)
         short_roc = (current - arr[-self.short_window]) / max(arr[-self.short_window], 0.01)
@@ -129,6 +132,11 @@ class MomentumStrategy(BaseStrategy):
             return None
 
         book = order_books.get(yes_token.token_id)
+
+        # Prefer order book mid_price over last-trade price for fresher data
+        if book and book.mid_price is not None:
+            current = book.mid_price
+
         if book and book.bid_depth > 0 and book.ask_depth > 0:
             depth_ratio = book.bid_depth / (book.bid_depth + book.ask_depth)
             # If price is trending up, expect more bid depth (support)

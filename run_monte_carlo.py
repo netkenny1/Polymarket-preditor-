@@ -21,7 +21,7 @@ import structlog
 from polymarket_bot.backtesting.engine import BacktestEngine, BacktestResult
 from polymarket_bot.backtesting.simulator import MarketSimulator
 from polymarket_bot.clients.economic_data import MockEconomicDataClient
-from polymarket_bot.clients.odds_sources import OddsAggregator
+from polymarket_bot.clients.odds_sources import EloRating, ExternalOdds, OddsAggregator, PollData
 from polymarket_bot.clients.polymarket import PaperTradingClient
 from polymarket_bot.clients.twitter import MockTwitterClient
 from polymarket_bot.config import (
@@ -180,8 +180,48 @@ def run_single_backtest(seed: int) -> DetailedResult:
         # Add economic context for narrative strategy
         context["economic_indicators"] = mock_econ.get_all_indicators()
 
-        # Add BTC price context for btc_daily strategy (realistic volatility)
+        # Per-step RNG for deterministic noise
         rng = np.random.RandomState(seed + step)
+
+        # ── REALISTIC CONTEXT: No hindsight bias ─────────────────
+        # All injected data is derived from CURRENT PRICE only.
+        # Nothing here uses sim.true_probability, which is reserved
+        # solely for market resolution at simulation end.
+        # Inject mock polling/ELO/external odds so all strategy branches fire
+        for sim in sim_markets:
+            cid = sim.market.condition_id
+            candidates = [t.outcome for t in sim.market.tokens]
+            current_yes = sim.price_history[-1] if sim.price_history else 0.5
+            if sim.market.category.value == "politics" and len(candidates) >= 2:
+                polls = []
+                for c in candidates:
+                    # Polls should reflect current market consensus (price), not the true future
+                    base_pct = current_yes if c == "Yes" else (1.0 - current_yes)
+                    pct = max(0.05, min(0.95, base_pct + rng.normal(0, 0.08)))
+                    polls.append(PollData(pollster=f"Mock-{rng.randint(1,100)}", candidate=c, pct=pct, sample_size=800))
+                context[f"polls_{cid}"] = polls
+            elif sim.market.category.value == "sports" and len(candidates) >= 2:
+                # Convert implied probability to ELO difference
+                elo_diff = 400 * (current_yes - 0.5)  # ~200 point diff = 75% win rate
+                base_elo = 1500
+                context[f"elo_{cid}"] = {
+                    candidates[0]: EloRating(
+                        team=candidates[0],
+                        rating=base_elo + elo_diff / 2 + rng.normal(0, 50),
+                        sport="generic",
+                    ),
+                    candidates[1]: EloRating(
+                        team=candidates[1],
+                        rating=base_elo - elo_diff / 2 + rng.normal(0, 50),
+                        sport="generic",
+                    ),
+                }
+            # External odds are a noisy reflection of the CURRENT market, not the true outcome
+            ext_prob = max(0.05, min(0.95, current_yes + rng.normal(0, 0.08)))
+            context[f"external_odds_{cid}"] = [
+                ExternalOdds(source="MockBook", event_name=sim.market.question, outcome="Yes", implied_probability=ext_prob),
+                ExternalOdds(source="MockBook", event_name=sim.market.question, outcome="No", implied_probability=1.0 - ext_prob),
+            ]
         if step == 0:
             btc_open = 60000.0 + rng.normal(0, 3000)
             btc_price = btc_open
