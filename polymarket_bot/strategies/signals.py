@@ -49,6 +49,17 @@ class SignalAggregator:
 
     def __init__(self, min_composite_edge: float = 0.03) -> None:
         self.min_composite_edge = min_composite_edge
+        # Mutable live weights — start from static defaults, updated by StrategyAutoTuner
+        self._live_weights: dict[str, float] = dict(STRATEGY_WEIGHTS)
+
+    def update_weights(self, new_weights: dict[str, float]) -> None:
+        """Update live strategy weights from the auto-tuner. Thread-safe (GIL)."""
+        self._live_weights.update(new_weights)
+        logger.info("strategy_weights_updated_live", count=len(new_weights))
+
+    def get_weight(self, strategy: str) -> float:
+        """Return the current live weight for a strategy."""
+        return self._live_weights.get(strategy, STRATEGY_WEIGHTS.get(strategy, 1.0))
 
     def aggregate(self, signals: list[Signal]) -> list[Signal]:
         """Combine signals for the same token into composite signals.
@@ -88,7 +99,7 @@ class SignalAggregator:
 
         directional_out = [s for s in composites if s.strategy != "market_maker"]
         mm_out = [s for s in composites if s.strategy == "market_maker"]
-        sort_key = lambda s: s.edge * s.confidence * STRATEGY_WEIGHTS.get(s.strategy, 1.0)
+        sort_key = lambda s: s.edge * s.confidence * self.get_weight(s.strategy)
         directional_out.sort(key=sort_key, reverse=True)
         mm_out.sort(key=sort_key, reverse=True)
         composites = directional_out + mm_out
@@ -114,7 +125,7 @@ class SignalAggregator:
         strategies = []
 
         for sig in signals:
-            w = STRATEGY_WEIGHTS.get(sig.strategy, 1.0) * sig.confidence
+            w = self.get_weight(sig.strategy) * sig.confidence
             total_weight += w
             weighted_fv += sig.estimated_fair_value * w
             weighted_edge += sig.edge * w
@@ -132,7 +143,7 @@ class SignalAggregator:
         combined_confidence = min(1.0, max_confidence + consensus_bonus)
 
         base = signals[0]
-        lead_strategy = max(strategies, key=lambda s: STRATEGY_WEIGHTS.get(s, 1.0))
+        lead_strategy = max(strategies, key=lambda s: self.get_weight(s))
         label = f"ensemble:{'+'.join(sorted(set(strategies)))}"
 
         return Signal(
@@ -169,7 +180,7 @@ class SignalAggregator:
             if len(outcomes) > 1:
                 ranked = sorted(
                     market_sigs,
-                    key=lambda s: s.edge * s.confidence * STRATEGY_WEIGHTS.get(s.strategy, 1.0),
+                    key=lambda s: s.edge * s.confidence * self.get_weight(s.strategy),
                     reverse=True,
                 )
                 best_outcome = ranked[0].outcome

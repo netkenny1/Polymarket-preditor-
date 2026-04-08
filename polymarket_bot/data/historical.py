@@ -327,3 +327,166 @@ class HistoricalDataFetcher:
 
         logger.info("dataset_built", markets=len(markets), tokens=len(price_histories))
         return result
+
+    # ── Resolved Market Fetcher ──────────────────────────────────────
+
+    def fetch_resolved_markets(
+        self,
+        limit: int = 100,
+        days_back: int = 90,
+        min_volume: float = 5000.0,
+    ) -> list[dict]:
+        """Fetch resolved Polymarket markets with known outcomes.
+
+        Uses the Gamma API with closed=true to get past markets.
+        Returns raw market dicts that include resolution/winner info.
+        """
+        cache_key = self._cache_key("resolved", limit=limit, days=days_back, vol=min_volume)
+        cached = self._load_cache(cache_key)
+        if cached:
+            logger.info("resolved_markets_from_cache", count=len(cached))
+            return cached
+
+        cutoff = datetime.now(timezone.utc) - timedelta(days=days_back)
+        all_resolved: list[dict] = []
+        offset = 0
+
+        while len(all_resolved) < limit:
+            time.sleep(self._request_delay)
+            try:
+                resp = self._gamma.get(
+                    "/markets",
+                    params={
+                        "limit": 100,
+                        "offset": offset,
+                        "closed": True,
+                        "active": False,
+                    },
+                )
+                resp.raise_for_status()
+                batch = resp.json()
+            except httpx.HTTPError as e:
+                logger.error("resolved_markets_fetch_failed", error=str(e))
+                break
+
+            if not batch:
+                break
+
+            for m in batch:
+                # Filter by volume
+                vol = float(m.get("volumeNum", m.get("volume", 0)) or 0)
+                if vol < min_volume:
+                    continue
+                # Filter by resolution date
+                end_str = m.get("end_date_iso") or m.get("endDate")
+                if end_str:
+                    try:
+                        end_dt = datetime.fromisoformat(str(end_str).replace("Z", "+00:00"))
+                        if end_dt < cutoff:
+                            continue
+                    except (ValueError, TypeError):
+                        pass
+                # Must have resolution info
+                tokens = m.get("tokens", [])
+                has_winner = any(t.get("winner") is not None for t in tokens) if tokens else False
+                outcomes = m.get("outcomes", [])
+                has_resolution = m.get("resolutionSource") or has_winner or m.get("resolvedBy")
+                if not (has_winner or has_resolution):
+                    continue
+                all_resolved.append(m)
+
+            offset += len(batch)
+            logger.info("resolved_markets_page", page_size=len(batch), total=len(all_resolved))
+
+            if len(batch) < 100:
+                break
+
+        result = all_resolved[:limit]
+        self._save_cache(cache_key, result)
+        logger.info("resolved_markets_fetched", count=len(result))
+        return result
+
+    def build_resolved_backtest_dataset(
+        self,
+        num_markets: int = 50,
+        days_back: int = 90,
+        min_volume: float = 5000.0,
+    ) -> dict:
+        """Build a backtest dataset from resolved markets with ground-truth outcomes.
+
+        Returns dict with:
+        - markets: list[Market] (tokens have winner=True/False set)
+        - price_histories: {token_id: [float]}
+        - timestamps: {token_id: [int]}
+        - outcomes: {condition_id: "Yes"|"No"}  ← ground truth
+        - categories: {condition_id: str}
+        """
+        logger.info("building_resolved_dataset", num_markets=num_markets, days_back=days_back)
+        raw_markets = self.fetch_resolved_markets(
+            limit=num_markets * 3, days_back=days_back, min_volume=min_volume
+        )
+
+        markets: list[Market] = []
+        price_histories: dict[str, list[float]] = {}
+        timestamps_map: dict[str, list[int]] = {}
+        outcomes: dict[str, str] = {}
+        categories: dict[str, str] = {}
+
+        for raw in raw_markets:
+            if len(markets) >= num_markets:
+                break
+
+            # Determine ground truth winner
+            winner_outcome: str | None = None
+            token_list = raw.get("tokens", [])
+            for t in token_list:
+                if t.get("winner") is True:
+                    winner_outcome = t.get("outcome", "Yes")
+                    break
+
+            if winner_outcome is None:
+                continue  # Skip markets with unknown outcome
+
+            # Parse market
+            market = self.parse_market(raw)
+
+            # Set winner on tokens
+            for token in market.tokens:
+                token.winner = (token.outcome == winner_outcome)
+
+            condition_id = market.condition_id
+            if not condition_id:
+                continue
+
+            # Try to fetch price history
+            histories = self.fetch_market_history(raw, interval="1h", days_back=min(days_back, 30))
+            if not histories:
+                continue
+
+            markets.append(market)
+            outcomes[condition_id] = winner_outcome
+            categories[condition_id] = market.category.value
+
+            for tid, hist in histories.items():
+                price_histories[tid] = [float(p["p"]) for p in hist]
+                timestamps_map[tid] = [int(p["t"]) for p in hist]
+
+            logger.info(
+                "resolved_market_added",
+                question=market.question[:60],
+                winner=winner_outcome,
+            )
+
+        return {
+            "markets": markets,
+            "price_histories": price_histories,
+            "timestamps": timestamps_map,
+            "outcomes": outcomes,
+            "categories": categories,
+            "metadata": {
+                "fetched_at": datetime.now(timezone.utc).isoformat(),
+                "num_markets": len(markets),
+                "days_back": days_back,
+                "min_volume": min_volume,
+            },
+        }

@@ -109,6 +109,30 @@ class NarrativeConfig:
 
 
 @dataclass(frozen=True)
+class AgentConfig:
+    """AI agent council configuration."""
+
+    anthropic_api_key: str = ""
+    fred_api_key: str = ""
+    news_api_key: str = ""
+    alpha_vantage_api_key: str = ""
+    twitter_api_key: str = ""
+    twitter_api_secret: str = ""
+    # Cycle intervals
+    council_cycle_minutes: int = 15
+    pattern_discovery_hours: int = 6
+    predictive_history_hours: int = 2
+    # Cost controls
+    max_daily_claude_cost_usd: float = 5.0
+    fast_model: str = "claude-haiku-4-5-20251001"
+    deep_model: str = "claude-opus-4-6"
+    # Feature flags (auto-disable gracefully if keys missing)
+    enable_trump_monitor: bool = True
+    enable_pattern_discovery: bool = True
+    enable_predictive_history: bool = True
+
+
+@dataclass(frozen=True)
 class LatencyArbitrageConfig:
     """Binance→Polymarket latency arbitrage parameters."""
     binance_ws_url: str = "wss://stream.binance.com:9443/ws"
@@ -139,6 +163,7 @@ class BotConfig:
     risk: RiskConfig = field(default_factory=RiskConfig)
     narrative: NarrativeConfig = field(default_factory=NarrativeConfig)
     latency_arb: LatencyArbitrageConfig = field(default_factory=LatencyArbitrageConfig)
+    agents: AgentConfig = field(default_factory=AgentConfig)
 
     @classmethod
     def from_env(cls) -> BotConfig:
@@ -206,5 +231,17 @@ class BotConfig:
                         str(RiskConfig.position_limit_per_market_pct),
                     )
                 ),
+            ),
+            agents=AgentConfig(
+                anthropic_api_key=os.getenv("ANTHROPIC_API_KEY", ""),
+                fred_api_key=os.getenv("FRED_API_KEY", ""),
+                news_api_key=os.getenv("NEWS_API_KEY", ""),
+                alpha_vantage_api_key=os.getenv("ALPHA_VANTAGE_API_KEY", ""),
+                twitter_api_key=os.getenv("TWITTER_API_KEY", ""),
+                twitter_api_secret=os.getenv("TWITTER_API_SECRET", ""),
+                council_cycle_minutes=int(os.getenv("COUNCIL_CYCLE_MINUTES", "15")),
+                pattern_discovery_hours=int(os.getenv("PATTERN_DISCOVERY_HOURS", "6")),
+                predictive_history_hours=int(os.getenv("PREDICTIVE_HISTORY_HOURS", "2")),
+                max_daily_claude_cost_usd=float(os.getenv("MAX_DAILY_CLAUDE_COST_USD", "5.0")),
             ),
         )

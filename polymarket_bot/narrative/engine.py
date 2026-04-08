@@ -15,6 +15,7 @@ from typing import Any
 import structlog
 
 from polymarket_bot.data.models import (
+    CrossAssetImpact,
     Market,
     MarketCategory,
     Narrative,
@@ -340,6 +341,77 @@ class NarrativeEngine:
                         metadata=country,
                     )
                 )
+
+    def ingest_cross_asset_impact(self, impacts: list[CrossAssetImpact]) -> None:
+        """Convert cross-asset signals (from AI agents) into NarrativeEvents.
+
+        Maps asset directions to narrative categories:
+        - Equity down + gold up → MARKET_CRISIS
+        - Oil spike → GEOPOLITICAL
+        - Crypto down + USD up → MARKET_CRISIS
+        - USD down sharply → TRADE_WAR
+        """
+        ts = __import__("datetime").datetime.now(__import__("datetime").timezone.utc)
+        for impact in impacts:
+            # Determine dominant category from asset moves
+            cat_score: dict[NarrativeCategory, float] = {
+                NarrativeCategory.MARKET_CRISIS: 0.0,
+                NarrativeCategory.GEOPOLITICAL: 0.0,
+                NarrativeCategory.TRADE_WAR: 0.0,
+                NarrativeCategory.MONETARY_POLICY: 0.0,
+            }
+
+            # Equity sell-off
+            if impact.sp500_direction < -0.3:
+                cat_score[NarrativeCategory.MARKET_CRISIS] += abs(impact.sp500_direction)
+            # Gold spike (risk-off hedge)
+            if impact.gold_direction > 0.3:
+                cat_score[NarrativeCategory.GEOPOLITICAL] += impact.gold_direction * 0.7
+                cat_score[NarrativeCategory.MARKET_CRISIS] += impact.gold_direction * 0.3
+            # Oil move
+            if abs(impact.oil_direction) > 0.3:
+                cat_score[NarrativeCategory.GEOPOLITICAL] += abs(impact.oil_direction)
+            # USD weakening
+            if impact.usd_direction < -0.3:
+                cat_score[NarrativeCategory.TRADE_WAR] += abs(impact.usd_direction)
+            # Crypto crash
+            if impact.crypto_direction < -0.4:
+                cat_score[NarrativeCategory.MARKET_CRISIS] += abs(impact.crypto_direction) * 0.5
+            # Crypto pump (risk-on)
+            if impact.crypto_direction > 0.4:
+                cat_score[NarrativeCategory.MONETARY_POLICY] += impact.crypto_direction * 0.4
+
+            if not any(v > 0.1 for v in cat_score.values()):
+                continue  # No strong signal
+
+            best_cat = max(cat_score, key=lambda k: cat_score[k])
+            sentiment = impact.to_narrative_sentiment()
+            magnitude = min(
+                max(abs(impact.sp500_direction), abs(impact.gold_direction),
+                    abs(impact.oil_direction), abs(impact.crypto_direction)),
+                1.0,
+            )
+
+            content = f"Cross-asset signal: {impact.source_event}"
+            ne = NarrativeEvent(
+                event_id=str(__import__("uuid").uuid4())[:12],
+                source="cross_asset_signal",
+                content=content,
+                timestamp=ts,
+                category=best_cat,
+                sentiment=sentiment,
+                magnitude=magnitude,
+                keywords=self._extract_keywords(content + " " + impact.source_event),
+                metadata={
+                    "sp500": impact.sp500_direction,
+                    "gold": impact.gold_direction,
+                    "oil": impact.oil_direction,
+                    "crypto": impact.crypto_direction,
+                    "usd": impact.usd_direction,
+                    "confidence": impact.confidence,
+                },
+            )
+            self._event_buffer.append(ne)
 
     def ingest_geopolitical_tensions(self, tensions: list[dict]) -> None:
         """Buffer narrative events from structured geopolitical tension records."""

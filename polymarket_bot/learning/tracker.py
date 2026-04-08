@@ -35,6 +35,12 @@ import numpy as np
 import structlog
 
 from polymarket_bot.data.models import Side, Signal, TradeResult
+# SQLiteStore imported lazily to avoid circular imports
+_SQLiteStore = None
+try:
+    from polymarket_bot.learning.sqlite_store import SQLiteStore as _SQLiteStore
+except Exception:
+    pass
 
 logger = structlog.get_logger()
 
@@ -105,10 +111,11 @@ class PredictionTracker:
         (0.8, 1.01),
     )
 
-    def __init__(self, persist_path: str | None = None) -> None:
+    def __init__(self, persist_path: str | None = None, db: Any = None) -> None:
         self.persist_path: Path | None = Path(persist_path) if persist_path else None
         self.records: list[PredictionRecord] = []
         self._by_id: dict[str, PredictionRecord] = {}
+        self._db = db  # SQLiteStore instance for dual-write persistence
         if self.persist_path and self.persist_path.exists():
             try:
                 self.load()
@@ -166,6 +173,13 @@ class PredictionTracker:
         if self.persist_path is not None:
             self.save()
 
+        # Dual-write to SQLite for persistent self-improvement
+        if self._db is not None:
+            try:
+                self._db.save_prediction(record)
+            except Exception:
+                pass
+
         return record.prediction_id
 
     def close_prediction(
@@ -198,6 +212,16 @@ class PredictionTracker:
 
         if self.persist_path is not None:
             self.save()
+
+        # Dual-write close to SQLite
+        if self._db is not None:
+            try:
+                self._db.close_prediction(
+                    prediction_id, exit_price, realized_pnl,
+                    correct=record.correct,
+                )
+            except Exception:
+                pass
 
     # ── Query helpers ───────────────────────────────────────────────
 

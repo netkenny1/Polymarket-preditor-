@@ -348,6 +348,34 @@ class Narrative:
 
 
 @dataclass
+class CrossAssetImpact:
+    """Cross-asset market impact from an event (Trump tweet, economic release, etc.)."""
+
+    source_event: str  # Description of triggering event
+    sp500_direction: float = 0.0     # -1 (sell) to +1 (buy)
+    gold_direction: float = 0.0
+    oil_direction: float = 0.0
+    crypto_direction: float = 0.0
+    usd_direction: float = 0.0
+    affected_sectors: dict = field(default_factory=dict)  # sector → direction float
+    affected_polymarket_categories: list = field(default_factory=list)  # list[str]
+    confidence: float = 0.5
+    timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+
+    def to_narrative_sentiment(self) -> float:
+        """Aggregate cross-asset signals into a single narrative sentiment score."""
+        # Weight: equity and gold are primary; oil and crypto secondary
+        weighted = (
+            self.sp500_direction * 0.35
+            + self.gold_direction * (-0.20)  # gold up = risk-off = bearish market
+            + self.oil_direction * (-0.15)   # oil spike = geopolitical fear
+            + self.crypto_direction * 0.15
+            + self.usd_direction * (-0.15)   # dollar up = risk-off
+        )
+        return max(-1.0, min(1.0, weighted))
+
+
+@dataclass
 class SimulationScenario:
     """One parallel scenario in the council-of-agents system."""
     scenario_id: str

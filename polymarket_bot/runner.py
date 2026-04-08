@@ -42,12 +42,22 @@ from polymarket_bot.strategies.market_regime import RegimeDetector
 from polymarket_bot.strategies.microstructure import MicrostructureStrategy
 from polymarket_bot.strategies.momentum import MomentumStrategy
 from polymarket_bot.strategies.sentiment import SentimentStrategy
-from polymarket_bot.strategies.signals import SignalAggregator
+from polymarket_bot.strategies.signals import SignalAggregator, STRATEGY_WEIGHTS
 from polymarket_bot.strategies.statistical import StatisticalStrategy
 from polymarket_bot.strategies.time_decay import TimeDecayStrategy
 from polymarket_bot.strategies.volatility import VolatilityStrategy
 from polymarket_bot.narrative.strategy import NarrativeStrategy
 from polymarket_bot.clients.economic_data import MockEconomicDataClient, EconomicDataClient
+from polymarket_bot.learning.sqlite_store import SQLiteStore
+from polymarket_bot.learning.tracker import PredictionTracker, StrategyAutoTuner, CalibrationAdjuster
+from polymarket_bot.agents.trump_monitor import TrumpMonitorAgent
+from polymarket_bot.agents.economics_agent import EconomicsAgent
+from polymarket_bot.agents.geopolitical_agent import GeopoliticalAgent
+from polymarket_bot.agents.crypto_agent import CryptoAgent
+from polymarket_bot.agents.market_sentiment_agent import MarketSentimentAgent
+from polymarket_bot.agents.predictive_history_agent import PredictiveHistoryAgent
+from polymarket_bot.agents.pattern_discovery_agent import PatternDiscoveryAgent
+from polymarket_bot.agents.orchestrator import CouncilOrchestrator
 
 logger = structlog.get_logger()
 
@@ -96,6 +106,12 @@ class AutonomousRunner:
         self._markets: list[Market] = []
         self._order_books: dict[str, OrderBook] = {}
         self._context: dict[str, Any] = {}
+        # Self-improvement & AI council (initialized in _initialize)
+        self.db: SQLiteStore | None = None
+        self.tracker: PredictionTracker | None = None
+        self.auto_tuner: StrategyAutoTuner | None = None
+        self.calibrator: CalibrationAdjuster | None = None
+        self.council: CouncilOrchestrator | None = None
 
     async def start(self) -> None:
         """Main entry point. Runs forever until stopped."""
@@ -107,6 +123,10 @@ class AutonomousRunner:
         loop = asyncio.get_running_loop()
         for sig in (signal_mod.SIGINT, signal_mod.SIGTERM):
             loop.add_signal_handler(sig, lambda: asyncio.create_task(self.shutdown()))
+
+        # Start AI council as background task (runs every 15 min concurrently)
+        if self.council is not None:
+            asyncio.create_task(self.council.start_background())
 
         print("\n🟢 Bot is LIVE. Press Ctrl+C to stop.\n")
 
@@ -193,11 +213,73 @@ class AutonomousRunner:
             ),
         ]
 
+        # ── Self-improvement: SQLite persistence + auto-tuner ───────────
+        self.db = SQLiteStore("bot_data.db")
+        self.tracker = PredictionTracker(db=self.db)
+        self.auto_tuner = StrategyAutoTuner(self.tracker, base_weights=dict(STRATEGY_WEIGHTS))
+        self.calibrator = CalibrationAdjuster(self.tracker)
+
+        # ── AI Agent Council ─────────────────────────────────────────────
+        # All agents accept a plain dict for config and degrade gracefully
+        # when API keys are absent.
+        anthropic_client = None
+        try:
+            import anthropic as _anthropic
+            if self.config.agents.anthropic_api_key:
+                anthropic_client = _anthropic.Anthropic(
+                    api_key=self.config.agents.anthropic_api_key
+                )
+        except ImportError:
+            pass
+
+        cfg = self.config.agents
+        # Build unified config dict mapping all key names agents expect
+        agent_cfg: dict[str, Any] = {
+            # Keys used by TrumpMonitorAgent / EconomicsAgent / GeopoliticalAgent
+            "newsapi_key": cfg.news_api_key,
+            "twitter_bearer": os.getenv("TWITTER_BEARER_TOKEN", ""),
+            "fred_client": None,   # FREDClient integration future work
+            # Keys used by CryptoAgent / PredictiveHistoryAgent / MarketSentimentAgent
+            "news_api_key": cfg.news_api_key,
+            "alpha_vantage_api_key": cfg.alpha_vantage_api_key,
+        }
+
+        # Get reference to NarrativeEngine inside NarrativeStrategy
+        narrative_strat = next(
+            (s for s in self.strategies if s.name == "narrative_analysis"), None
+        )
+        narrative_engine = narrative_strat._engine if narrative_strat is not None else None
+
+        fast_agents = [
+            TrumpMonitorAgent(anthropic_client, agent_cfg),
+            EconomicsAgent(anthropic_client, agent_cfg),
+            GeopoliticalAgent(anthropic_client, agent_cfg),
+            CryptoAgent(anthropic_client, agent_cfg),
+            MarketSentimentAgent(anthropic_client, agent_cfg),
+        ]
+        deep_agents = [
+            PredictiveHistoryAgent(anthropic_client, agent_cfg),
+            PatternDiscoveryAgent(anthropic_client, agent_cfg, db=self.db),
+        ]
+
+        self.council = CouncilOrchestrator(
+            fast_agents=fast_agents,
+            deep_agents=deep_agents,
+            narrative_engine=narrative_engine,
+            db=self.db,
+            council_cycle_minutes=cfg.council_cycle_minutes,
+            predictive_history_hours=cfg.predictive_history_hours,
+            pattern_discovery_hours=cfg.pattern_discovery_hours,
+            max_daily_cost_usd=cfg.max_daily_claude_cost_usd,
+        )
+
         logger.info(
             "initialized",
             budget=self.budget_usd,
             paper=self.paper,
             strategies=len(self.strategies),
+            council_agents=len(fast_agents) + len(deep_agents),
+            anthropic_enabled=anthropic_client is not None,
         )
 
     async def _trading_cycle(self) -> None:
@@ -348,6 +430,17 @@ class AutonomousRunner:
                         f"| cost: ${r.net_cost:.2f}"
                     )
 
+        # 9b. Auto-tune strategy weights every 50 cycles
+        if self._cycle_count % 50 == 0 and self.auto_tuner is not None:
+            new_weights = self.auto_tuner.apply_adjustments(self.aggregator._live_weights)
+            self.aggregator.update_weights(new_weights)
+            if self.db is not None:
+                try:
+                    self.db.save_strategy_weights(new_weights)
+                except Exception:
+                    pass
+            logger.info("strategy_weights_auto_tuned", cycle=self._cycle_count)
+
         # Circuit breaker: if we've lost more than 5% in the last hour, pause
         if hasattr(self, '_hourly_pnl_tracker'):
             self._hourly_pnl_tracker.append((time_mod.time(), self.portfolio.total_pnl))
@@ -479,6 +572,12 @@ class AutonomousRunner:
 
         if self.crypto_feed:
             self.crypto_feed.close()
+
+        if self.db is not None:
+            try:
+                self.db.close()
+            except Exception:
+                pass
 
 
 def main() -> None:
