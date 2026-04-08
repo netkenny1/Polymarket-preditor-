@@ -15,3 +15,5 @@ logs/
 .claude/
 .DS_Store
 .cache/
+*.db
+portfolio_state.json
