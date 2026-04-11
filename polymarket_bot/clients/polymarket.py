@@ -14,7 +14,6 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 from polymarket_bot.config import PolymarketConfig
 from polymarket_bot.data.models import (
     Market,
-    MarketCategory,
     Order,
     OrderBook,
     OrderBookLevel,
@@ -24,7 +23,6 @@ from polymarket_bot.data.models import (
     Token,
     TradeResult,
 )
-from polymarket_bot.utils.helpers import categorize_market
 
 logger = structlog.get_logger()
 
@@ -491,7 +489,11 @@ class PolymarketClient:
     # ── Parsing ──────────────────────────────────────────────────
 
     def _parse_market(self, raw: dict[str, Any]) -> Market:
-        """Parse raw API response into a Market model."""
+        """Parse raw Gamma API response into a slim Market model.
+
+        The BTC 5-min bot only relies on the slug / condition_id / tokens
+        path; `bot.py` parses the richer fields itself.
+        """
         tokens = []
         for t in raw.get("tokens", []):
             tokens.append(
@@ -502,31 +504,14 @@ class PolymarketClient:
                 )
             )
 
-        end_date = None
-        if raw.get("end_date_iso"):
-            try:
-                end_date = datetime.fromisoformat(
-                    raw["end_date_iso"].replace("Z", "+00:00")
-                )
-            except (ValueError, TypeError):
-                pass
-
-        question = raw.get("question", "")
-        tags = raw.get("tags", []) or []
-        cat = categorize_market(question, tags)
-
         return Market(
-            condition_id=raw.get("condition_id", ""),
-            question=question,
+            condition_id=raw.get("condition_id", raw.get("conditionId", "")),
+            question=raw.get("question", ""),
             slug=raw.get("slug", raw.get("market_slug", "")),
             tokens=tokens,
-            category=MarketCategory(cat) if cat in MarketCategory.__members__.values() else MarketCategory.OTHER,
-            end_date=end_date,
-            volume_24h=float(raw.get("volume_num_24hr", 0) or 0),
-            liquidity=float(raw.get("liquidity_num", 0) or 0),
-            active=raw.get("active", True),
-            description=raw.get("description", ""),
-            tags=tags,
+            active=bool(raw.get("active", True)),
+            liquidity=float(raw.get("liquidity_num", raw.get("liquidityNum", 0)) or 0),
+            volume_24h=float(raw.get("volume_num_24hr", raw.get("volumeNum", 0)) or 0),
         )
 
 

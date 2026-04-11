@@ -1,9 +1,9 @@
-"""Data models for the Polymarket trading bot."""
+"""Data models for the BTC 5-minute trading bot."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime
 from enum import Enum
 from typing import Optional
 
@@ -14,8 +14,8 @@ class Side(str, Enum):
 
 
 class Outcome(str, Enum):
-    YES = "Yes"
-    NO = "No"
+    UP = "Up"
+    DOWN = "Down"
 
 
 class OrderStatus(str, Enum):
@@ -27,77 +27,66 @@ class OrderStatus(str, Enum):
     FAILED = "FAILED"
 
 
-class MarketCategory(str, Enum):
-    CRYPTO = "crypto"
-    POLITICS = "politics"
-    SPORTS = "sports"
-    POP_CULTURE = "pop_culture"
-    SCIENCE = "science"
-    OTHER = "other"
-
-
 @dataclass
 class Token:
-    """A tradeable outcome token on Polymarket."""
+    """A tradeable outcome token (Up or Down) on Polymarket."""
 
     token_id: str
-    outcome: str  # "Yes" or "No"
+    outcome: str  # "Up" / "Down"
     price: float  # 0.0 to 1.0
-    winner: Optional[bool] = None
 
 
 @dataclass
 class Market:
-    """A Polymarket prediction market."""
+    """A Polymarket BTC 5-minute up/down market."""
 
     condition_id: str
-    question: str
     slug: str
+    question: str = ""
     tokens: list[Token] = field(default_factory=list)
-    category: MarketCategory = MarketCategory.OTHER
-    end_date: Optional[datetime] = None
-    volume_24h: float = 0.0
-    liquidity: float = 0.0
+    # Window bounds in unix seconds. `start_ts` is also the strike (BTC at t=start).
+    start_ts: int = 0
+    end_ts: int = 0
+    strike_price: float = 0.0  # BTC price at window start (resolution reference)
     active: bool = True
-    description: str = ""
-    tags: list[str] = field(default_factory=list)
+    liquidity: float = 0.0
+    volume_24h: float = 0.0
 
     @property
-    def yes_price(self) -> float:
-        for t in self.tokens:
-            if t.outcome == "Yes":
-                return t.price
-        return 0.5
+    def up_token(self) -> Optional[Token]:
+        return next((t for t in self.tokens if t.outcome.lower() == "up" or t.outcome.lower() == "yes"), None)
 
     @property
-    def no_price(self) -> float:
-        for t in self.tokens:
-            if t.outcome == "No":
-                return t.price
-        return 0.5
+    def down_token(self) -> Optional[Token]:
+        return next((t for t in self.tokens if t.outcome.lower() == "down" or t.outcome.lower() == "no"), None)
+
+    @property
+    def up_price(self) -> float:
+        t = self.up_token
+        return t.price if t else 0.5
+
+    @property
+    def down_price(self) -> float:
+        t = self.down_token
+        return t.price if t else 0.5
 
     @property
     def spread(self) -> float:
-        """Estimated bid-ask spread proxy from token price overround."""
-        overround = abs(1.0 - self.yes_price - self.no_price)
-        return max(overround, 0.01)  # At least 1 cent spread
+        return abs(1.0 - self.up_price - self.down_price)
 
-    @property
-    def implied_probability(self) -> float:
-        return self.yes_price
+    def seconds_remaining(self, now_ts: int) -> int:
+        return max(0, self.end_ts - now_ts)
 
 
 @dataclass
 class OrderBookLevel:
-    """A single price level in the order book."""
-
     price: float
     size: float
 
 
 @dataclass
 class OrderBook:
-    """Full order book for a market outcome."""
+    """Full order book for a market outcome token."""
 
     token_id: str
     bids: list[OrderBookLevel] = field(default_factory=list)
@@ -135,8 +124,6 @@ class OrderBook:
 
 @dataclass
 class Order:
-    """A trade order."""
-
     order_id: str
     market_condition_id: str
     token_id: str
@@ -152,8 +139,6 @@ class Order:
 
 @dataclass
 class Position:
-    """A held position in a market."""
-
     market_condition_id: str
     token_id: str
     outcome: str
@@ -162,7 +147,7 @@ class Position:
     current_price: float = 0.0
     unrealized_pnl: float = 0.0
     realized_pnl: float = 0.0
-    max_price_seen: float = 0.0  # For trailing stop
+    max_price_seen: float = 0.0
     strategy: str = ""
 
     @property
@@ -182,15 +167,15 @@ class Position:
 
 @dataclass
 class Signal:
-    """A trading signal from a strategy."""
+    """A trading signal emitted by the strategy."""
 
     market_condition_id: str
     token_id: str
     side: Side
     outcome: str
-    estimated_fair_value: float  # Our estimate of true probability
-    market_price: float  # Current market price
-    edge: float  # fair_value - market_price (for BUY) or inverse
+    estimated_fair_value: float  # model's fair probability
+    market_price: float  # current market price (YES ask / NO ask)
+    edge: float  # |fair - market|
     confidence: float  # 0 to 1
     strategy: str
     metadata: dict = field(default_factory=dict)
@@ -198,19 +183,13 @@ class Signal:
 
     @property
     def expected_value(self) -> float:
-        """Expected profit per dollar risked."""
         if self.side == Side.BUY:
-            # Buy at market_price, expect to win fair_value
-            return (self.estimated_fair_value / self.market_price) - 1.0
-        else:
-            # Sell at market_price, expect it's worth fair_value
-            return (self.market_price / self.estimated_fair_value) - 1.0
+            return (self.estimated_fair_value / self.market_price) - 1.0 if self.market_price > 0 else 0.0
+        return (self.market_price / self.estimated_fair_value) - 1.0 if self.estimated_fair_value > 0 else 0.0
 
 
 @dataclass
 class TradeResult:
-    """Result of an executed trade."""
-
     order: Order
     success: bool
     fill_price: float = 0.0
@@ -226,8 +205,6 @@ class TradeResult:
 
 @dataclass
 class PortfolioSnapshot:
-    """Point-in-time snapshot of the portfolio."""
-
     timestamp: datetime
     total_value: float
     cash: float
@@ -236,132 +213,3 @@ class PortfolioSnapshot:
     realized_pnl: float
     num_positions: int
     drawdown_pct: float = 0.0
-
-
-@dataclass
-class SentimentData:
-    """Aggregated sentiment for a market/topic."""
-
-    query: str
-    tweet_count: int = 0
-    avg_sentiment: float = 0.0  # -1 to 1
-    sentiment_std: float = 0.0
-    volume_ratio: float = 1.0  # Current vs baseline volume
-    bullish_pct: float = 0.5
-    bearish_pct: float = 0.5
-    sample_tweets: list[str] = field(default_factory=list)
-    timestamp: datetime = field(default_factory=datetime.utcnow)
-
-
-class NarrativeCategory(str, Enum):
-    """Categories for narrative themes."""
-    TRADE_WAR = "trade_war"
-    MONETARY_POLICY = "monetary_policy"
-    GEOPOLITICAL = "geopolitical"
-    CRYPTO_REGULATION = "crypto_regulation"
-    FISCAL_POLICY = "fiscal_policy"
-    ELECTION = "election"
-    MARKET_CRISIS = "market_crisis"
-    OTHER = "other"
-
-
-@dataclass
-class EconomicIndicator:
-    """A single economic data point."""
-    name: str
-    value: float
-    previous_value: float
-    change_pct: float
-    unit: str = ""
-    timestamp: datetime = field(default_factory=datetime.utcnow)
-    source: str = ""
-    metadata: dict = field(default_factory=dict)
-
-
-@dataclass
-class NarrativeEvent:
-    """A discrete event that feeds into a narrative."""
-    event_id: str
-    source: str  # "trump_tweet", "economic_data", "news", "market_move"
-    content: str
-    timestamp: datetime
-    category: NarrativeCategory
-    sentiment: float  # -1 to 1
-    magnitude: float  # 0 to 1
-    keywords: list[str] = field(default_factory=list)
-    metadata: dict = field(default_factory=dict)
-
-
-@dataclass
-class HistoricalPhase:
-    """One phase within a historical pattern."""
-    phase_name: str
-    description: str
-    duration_days: int
-    market_impact: dict = field(default_factory=dict)  # {category: direction}
-    keywords: list[str] = field(default_factory=list)
-    sequence_index: int = 0
-
-
-@dataclass
-class HistoricalPattern:
-    """A codified historical precedent for predictive history."""
-    pattern_id: str
-    name: str
-    category: NarrativeCategory
-    description: str
-    trigger_keywords: list[str] = field(default_factory=list)
-    timeline_days: int = 0
-    market_impact: dict = field(default_factory=dict)  # {category: direction}
-    outcome_direction: float = 0.0  # -1 to 1
-    outcome_magnitude: float = 0.0  # 0 to 1
-    phases: list[HistoricalPhase] = field(default_factory=list)
-    similarity_threshold: float = 0.4
-    source_period: str = ""
-
-
-@dataclass
-class Narrative:
-    """A coherent story built from multiple events with predictive power."""
-    narrative_id: str
-    title: str
-    category: NarrativeCategory
-    thesis: str
-    events: list[NarrativeEvent] = field(default_factory=list)
-    affected_market_ids: list[str] = field(default_factory=list)
-    predicted_direction: float = 0.0  # -1 to 1
-    confidence: float = 0.0
-    strength: float = 0.0  # 0 to 1
-    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
-    updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
-    historical_pattern_id: Optional[str] = None
-    is_active: bool = True
-
-    @property
-    def age_hours(self) -> float:
-        delta = datetime.now(timezone.utc) - self.created_at
-        return delta.total_seconds() / 3600.0
-
-    @property
-    def event_count(self) -> int:
-        return len(self.events)
-
-
-@dataclass
-class SimulationScenario:
-    """One parallel scenario in the council-of-agents system."""
-    scenario_id: str
-    name: str
-    narrative_id: str
-    assumptions: dict = field(default_factory=dict)
-    predicted_direction: float = 0.0
-    predicted_magnitude: float = 0.0
-    weight: float = 1.0
-    accuracy_history: list[float] = field(default_factory=list)
-    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
-
-    @property
-    def avg_accuracy(self) -> float:
-        if not self.accuracy_history:
-            return 0.5
-        return sum(self.accuracy_history) / len(self.accuracy_history)

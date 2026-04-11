@@ -1,5 +1,7 @@
 """Allow running with `python -m polymarket_bot`."""
 
+import sys
+
 from polymarket_bot.main import main
 
-main()
+sys.exit(main())

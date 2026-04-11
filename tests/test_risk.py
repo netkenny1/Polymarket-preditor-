@@ -242,14 +242,20 @@ class TestRiskManager:
         assert "drawdown" in reason.lower()
         assert self.risk.trading_halted
 
-    def test_reject_after_daily_loss(self):
-        """Should reject after daily loss limit hit."""
-        self.risk.daily_pnl = -55.0  # Over $50 limit
+    def test_reduce_sizing_after_daily_loss(self):
+        """Should severely reduce sizing (not hard halt) after daily loss limit."""
+        # Baseline size with no daily loss
+        baseline_signal = self._make_signal(edge=0.15, confidence=0.8)
+        _, baseline_size, _ = self.risk.check_signal(baseline_signal)
 
-        signal = self._make_signal()
-        approved, _, reason = self.risk.check_signal(signal)
-        assert not approved
-        assert "daily loss" in reason.lower()
+        # Now breach the daily-loss limit
+        self.risk.daily_pnl = -55.0  # Over $50 limit
+        signal = self._make_signal(edge=0.15, confidence=0.8)
+        approved, reduced_size, _ = self.risk.check_signal(signal)
+
+        # Soft reduction: still approved, but at a fraction of baseline size
+        assert approved
+        assert reduced_size < baseline_size * 0.5
 
     def test_reject_max_positions(self):
         """Should reject when max positions reached."""
